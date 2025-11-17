@@ -65,6 +65,7 @@
   Tạo tài khoản tại [OpenAI](https://platform.openai.com/) & lấy key, lưu vào biến môi trường, **.env**
   ```bash
   OPENAI_API_KEY=your_openai_key_here
+  OPENAI_API_BASE_URL=your_openai_url_here
   ```
 
 ### Bước 2: Khởi chạy ứng dụng
