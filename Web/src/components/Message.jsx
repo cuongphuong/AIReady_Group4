@@ -10,13 +10,23 @@ function Avatar({ role }) {
   )
 }
 
-export default function Message({ role = 'assistant', text = '', time = '' }) {
+export default function Message({ role = 'assistant', text = '', time = '', animate = false, typing = false }) {
   const isUser = role === 'user'
+  const bubbleClass = [isUser ? 'bubble-user' : 'bubble-bot']
+  if (animate) bubbleClass.push('is-entering')
+  if (typing) bubbleClass.push('typing')
+
   return (
     <div className={`message-row ${isUser ? 'user' : 'assistant'}`}>
       {!isUser && <Avatar role={role} />}
-      <div className={`bubble ${isUser ? 'bubble-user' : 'bubble-bot'}`}>
-        <div className="bubble-text">{text}</div>
+      <div className={`bubble ${bubbleClass.join(' ')}`}>
+        <div className="bubble-text">
+          {typing ? (
+            <span className="typing-dots"><span></span><span></span><span></span></span>
+          ) : (
+            text
+          )}
+        </div>
         <div className="bubble-meta">{time}</div>
       </div>
       {isUser && <Avatar role={role} />}

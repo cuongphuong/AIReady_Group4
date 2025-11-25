@@ -11,11 +11,41 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
   const [value, setValue] = useState('')
   const [sending, setSending] = useState(false)
   const listRef = useRef(null)
+  const composeRef = useRef(null)
   const fileRef = useRef(null)
+  const pendingRef = useRef(null)
 
   useEffect(() => {
     if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight
   }, [messages])
+
+  // auto-resize composer textarea when value changes
+  useEffect(() => {
+    const ta = composeRef.current
+    if (!ta) return
+    try {
+      // Default to single-line compact height when empty
+      if (!value || value.trim() === '') {
+        ta.style.height = '36px'
+        ta.style.overflowY = 'hidden'
+        // ensure pill is single-line
+        const pillEl = ta.closest('.composer-pill')
+        if (pillEl) pillEl.classList.remove('is-multiline')
+        return
+      }
+      ta.style.height = 'auto'
+      const newH = Math.min(ta.scrollHeight, 220)
+      ta.style.height = newH + 'px'
+      ta.style.overflowY = ta.scrollHeight > 220 ? 'auto' : 'hidden'
+      // set pill multiline class when textarea is taller than single-line or contains newline
+      const pillEl = ta.closest('.composer-pill')
+      const isMulti = value.includes('\n') || ta.scrollHeight > 36
+      if (pillEl) {
+        if (isMulti) pillEl.classList.add('is-multiline')
+        else pillEl.classList.remove('is-multiline')
+      }
+    } catch (e) {}
+  }, [value])
 
   // sync when chat changes
   useEffect(() => {
@@ -32,24 +62,90 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
     setMessages(next)
     setValue('')
     setSending(true)
+    // Append a placeholder assistant "typing" message so user sees immediate feedback
+    const placeholder = { id: Date.now() + 9999, role: 'assistant', text: 'Đang phân loại...', time: '', animate: true, typing: true }
+    pendingRef.current = placeholder.id
+    const nextWithPlaceholder = [...next, placeholder]
+    setMessages(nextWithPlaceholder)
     if (chat) onUpdateChat({ ...chat, messages: next })
+    // send text to backend classifier
+    ;(async () => {
+      try {
+        const resp = await fetch('http://localhost:8000/classify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text })
+        })
+        if (!resp.ok) {
+          const errText = await resp.text()
+          throw new Error(errText || `HTTP ${resp.status}`)
+        }
+        const data = await resp.json()
+        // Expecting { results: [ { text, label, raw }, ... ] }
+        let botText = ''
+        if (data && Array.isArray(data.results)) {
+          botText = data.results
+            .map((r, i) => {
+              // show the original line and the label; if raw differs, include details
+              const details = r.raw && r.raw !== r.label ? ` — ${r.raw}` : ''
+              return `${i + 1}. ${r.label}${details}\n${r.text}`
+            })
+            .join('\n\n')
+        } else if (data && data.label) {
+          // fallback to legacy single-label response
+          botText = `Phân loại: ${data.label}` + (data.raw && data.raw !== data.label ? `\n\nChi tiết: ${data.raw}` : '')
+        } else {
+          botText = 'Không nhận được kết quả hợp lệ từ server.'
+        }
 
-    // simulate bot reply
-    setTimeout(() => {
-      const bot = {
-        id: Date.now() + 1,
-        role: 'assistant',
-        text: `Phản hồi mẫu: "${text}"`,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        const bot = {
+          id: Date.now() + 1,
+          role: 'assistant',
+          text: botText,
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          animate: true
+        }
+        // replace placeholder message if present, otherwise append
+        setMessages((prev) => {
+          if (!pendingRef.current) return [...prev, bot]
+          const idx = prev.findIndex((m) => m.id === pendingRef.current)
+          if (idx >= 0) {
+            const copy = [...prev]
+            copy.splice(idx, 1, bot)
+            pendingRef.current = null
+            return copy
+          }
+          return [...prev, bot]
+        })
+        if (chat) onUpdateChat({ ...chat, messages: [...next.filter(m=>m.role!=='assistant'), bot] })
+      } catch (err) {
+        const bot = {
+          id: Date.now() + 2,
+          role: 'assistant',
+          text: `Lỗi khi gọi server: ${err.message}`,
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          animate: true
+        }
+        setMessages((prev) => {
+          if (!pendingRef.current) return [...prev, bot]
+          const idx = prev.findIndex((m) => m.id === pendingRef.current)
+          if (idx >= 0) {
+            const copy = [...prev]
+            copy.splice(idx, 1, bot)
+            pendingRef.current = null
+            return copy
+          }
+          return [...prev, bot]
+        })
+        if (chat) onUpdateChat({ ...chat, messages: [...next.filter(m=>m.role!=='assistant'), bot] })
+      } finally {
+        setSending(false)
       }
-      const next2 = [...messages, userMsg, bot]
-      setMessages(next2)
-      setSending(false)
-      if (chat) onUpdateChat({ ...chat, messages: next2 })
-    }, 800)
+    })()
   }
 
   function handleKey(e) {
+    // Enter sends message; Shift+Enter inserts newline
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       sendMessage()
@@ -209,14 +305,15 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
             <span className="plus">＋</span>
           </button>
 
-          <input
-            type="text"
+          <textarea
+            ref={composeRef}
             className="composer-input"
             value={value}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={handleKey}
             placeholder={chat ? 'Mô tả lỗi hoặc dán danh sách bug; hoặc đính kèm file (.csv, .xlsx)' : 'Select or create a chat to start'}
             disabled={!chat}
+            rows={1}
           />
 
           <div className="pill-actions">

@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
+import ReactDOM from 'react-dom'
 
 export default function Sidebar({ chats = [], currentChatId = null, onNewChat = () => {}, onSelect = () => {}, onDelete = () => {}, onRename = () => {} }) {
   const [editingId, setEditingId] = useState(null)
@@ -49,7 +50,18 @@ export default function Sidebar({ chats = [], currentChatId = null, onNewChat = 
 
   function cancelDelete() {
     setPendingDelete(null)
+    try { document.body.classList.remove('modal-open') } catch (e) {}
   }
+
+  useEffect(() => {
+    // toggle body class so global styles can remove background blur when modal is open
+    if (pendingDelete) {
+      try { document.body.classList.add('modal-open') } catch (e) {}
+    }
+    return () => {
+      try { document.body.classList.remove('modal-open') } catch (e) {}
+    }
+  }, [pendingDelete])
 
   return (
     <aside className="sidebar">
@@ -108,7 +120,7 @@ export default function Sidebar({ chats = [], currentChatId = null, onNewChat = 
 
       <div className="sidebar-footer">BugClassifier • Chat UI</div>
 
-      {pendingDelete && (
+      {pendingDelete && ReactDOM.createPortal(
         <div className="modal-overlay" onClick={cancelDelete}>
           <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
             <div className="modal-title">Delete conversation?</div>
@@ -118,7 +130,8 @@ export default function Sidebar({ chats = [], currentChatId = null, onNewChat = 
               <button className="btn btn-danger" onClick={confirmDelete}>Delete</button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
     </aside>

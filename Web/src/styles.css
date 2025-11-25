@@ -9,6 +9,7 @@
   --surface: rgba(255,255,255,0.02); /* surface tints */
   --user: #0b84ff;
   --glass: rgba(255,255,255,0.03);
+  --overlay: rgba(2,6,23,0.55);
 }
 /* Light theme overrides */
 .theme-light {
@@ -19,9 +20,10 @@
   --muted: rgba(12,20,34,0.72); /* primary text (light theme) */
   --text: #0c1422; /* on-surface text color (light theme) */
   --border: rgba(12,20,34,0.08);
-  --surface: rgba(2,6,23,0.03);
+  --surface: rgba(255,255,255,0.96); /* opaque light surface for dialogs/panels */
   --user: #0b84ff;
   --glass: rgba(2,6,23,0.03);
+  --overlay: rgba(2,6,23,0.06);
 }
 .theme-dark{ }
 body {
@@ -85,6 +87,7 @@ html, body, #root {
   gap:8px;
   padding:14px;
   border-top:1px solid var(--border);
+  /* center the composer pill vertically by default */
   align-items:center;
 }
 
@@ -105,7 +108,34 @@ html, body, #root {
   border: 1px solid var(--border);
   box-shadow: 0 8px 20px rgba(2,6,23,0.12);
   color: var(--text);
+  /* smooth transitions for pop/fade */
+  transition: transform .18s cubic-bezier(.2,.9,.2,1), opacity .18s ease, box-shadow .18s ease;
 }
+
+/* typing placeholder bubble */
+.bubble.typing{
+  /* slightly muted surface for typing */
+  background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+  border: 1px dashed color-mix(in srgb, var(--border) 70%, rgba(255,255,255,0.04) 30%);
+  color: var(--muted);
+}
+.bubble.typing .typing-dots{display:inline-flex;gap:6px;align-items:center}
+.bubble.typing .typing-dots span{width:6px;height:6px;border-radius:50%;background:currentColor;opacity:0.85;transform:translateY(0);animation:typing 1s linear infinite}
+.bubble.typing .typing-dots span:nth-child(2){animation-delay:0.15s}
+.bubble.typing .typing-dots span:nth-child(3){animation-delay:0.3s}
+@keyframes typing{0%{opacity:.2;transform:translateY(0)}50%{opacity:1;transform:translateY(-6px)}100%{opacity:.2;transform:translateY(0)}}
+
+/* pop-in animation for newly added messages */
+@keyframes popIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.995); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* apply pop-in only when element has is-entering class */
+.bubble.is-entering{ animation: popIn .22s cubic-bezier(.2,.9,.25,1) both; }
+
+/* subtle hover/active lift for bubbles */
+.bubble:hover{ transform: translateY(-2px); box-shadow: 0 14px 36px rgba(2,6,23,0.14); }
 .bubble-bot{
   background: linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.01));
   border: 1px solid var(--border);
@@ -202,21 +232,36 @@ html, body, #root {
 .modal-overlay{
   position:fixed;
   inset:0;
-  background:rgba(2,6,23,0.55);
+  background:var(--overlay);
+  backdrop-filter: none; /* ensure overlay does not add blur */
   display:flex;
   align-items:flex-start;
   justify-content:center;
   padding-top:33vh;
-  z-index:1200;
+  z-index:99999; /* increased so overlay sits above other UI elements */
 }
 .modal{
-  background:linear-gradient(180deg, rgba(11,16,32,0.98), rgba(7,16,34,0.96));
-  color:var(--muted);
+  background: var(--surface);
+  color: var(--text);
   padding:18px;
   border-radius:12px;
   min-width:320px;
   max-width:90%;
-  box-shadow:0 12px 40px rgba(2,6,23,0.6);
+  border: 1px solid var(--border);
+  box-shadow:0 12px 40px rgba(2,6,23,0.12);
+  position:relative;
+  z-index:100000; /* ensure modal content is above overlay children */
+}
+
+/* When modal is open, remove any background blur/dim applied by other styles
+   Ensure main content renders without additional filters so modal content reads clearly. */
+body.modal-open .app-wrapper,
+body.modal-open .app-card,
+body.modal-open .messages,
+body.modal-open .sidebar,
+body.modal-open .conversation-item {
+  filter: none !important;
+  opacity: 1 !important;
 }
 .modal-title{font-weight:700;margin-bottom:8px;color:var(--text)}
 .modal-body{font-size:13px;opacity:0.9;margin-bottom:14px}
@@ -277,13 +322,24 @@ html, body, #root {
 .main-chat{flex:1;padding:22px;display:flex;flex-direction:column;min-width:0}
 
 /* Composer input */
-.composer-pill{display:flex;align-items:center;gap:8px;background:var(--surface);padding:8px;border-radius:999px;width:100%}
-.composer-pill:focus-within{box-shadow:0 4px 20px rgba(43,110,246,0.12)}
-.pill-add{background:transparent;border:none;color:var(--muted);padding:6px 10px;border-radius:8px;cursor:pointer;font-size:18px}
+.composer-pill{display:flex;align-items:center;gap:8px;background:var(--surface);padding:8px;border-radius:999px;width:100%;border:1px solid var(--border);transition:box-shadow .12s ease, border-color .12s ease}
+.composer-pill:focus-within{box-shadow:0 6px 24px rgba(43,110,246,0.12);border-color:color-mix(in srgb, var(--accent-2) 50%, var(--border) 50%)}
+.composer-pill.is-multiline{align-items:flex-start;border-radius:12px}
+/* when pill becomes multiline, allow it to align to the top of the composer area */
+.composer-pill.is-multiline{align-self:flex-start}
+
+/* single-line composer: vertically center the text within the textarea */
+.composer-pill:not(.is-multiline) .composer-input{
+  height:36px;
+  line-height:36px;
+  padding-top:0;
+  padding-bottom:0;
+}
+.pill-add{background:transparent;border:none;color:var(--muted);padding:6px 10px;border-radius:8px;cursor:pointer;font-size:18px;align-self:center}
 .pill-add:hover{color:#fff}
-.composer-input{flex:1;padding:10px 12px;border-radius:999px;border:none;background:transparent;color:inherit;outline:none;font-size:14px}
-.pill-actions{display:flex;align-items:center;gap:8px;margin-left:8px}
-.icon-btn{width:36px;height:36px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;border:none;background:transparent;color:var(--muted);cursor:pointer}
+.composer-input{flex:1;padding:8px 12px;border-radius:12px;border:none;background:transparent;color:inherit;outline:none;font-size:14px;line-height:20px;resize:none;min-height:36px;max-height:220px;overflow:auto;font-family:inherit;vertical-align:top}
+.pill-actions{display:flex;align-items:center;gap:8px;margin-left:8px;align-self:center}
+.icon-btn{width:36px;height:36px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;border:none;background:transparent;color:var(--muted);cursor:pointer;align-self:center}
 .icon-btn:hover{color:var(--text);background:var(--surface)}
 .icon-btn.send{background:linear-gradient(90deg,var(--accent-2),var(--accent-1));color:#fff}
 .icon-btn.send svg{filter:brightness(2)}
