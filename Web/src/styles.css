@@ -9,7 +9,7 @@
   --surface: rgba(255,255,255,0.02); /* surface tints */
   --user: #0b84ff;
   --glass: rgba(255,255,255,0.03);
-  --overlay: rgba(2,6,23,0.55);
+    --overlay: rgba(20,24,31,0.65);
 }
 /* Light theme overrides */
 .theme-light {
@@ -177,7 +177,7 @@ html, body, #root {
   height:calc(100vh - 48px);
   background: var(--surface);
   border-radius:12px;
-  box-shadow: 0 6px 18px rgba(2,6,23,0.6);
+  box-shadow: 0 2px 12px rgba(2,6,23,0.12);
   overflow:hidden;
   display:flex;
   flex-direction:column;
@@ -232,8 +232,8 @@ html, body, #root {
 .modal-overlay{
   position:fixed;
   inset:0;
-  background:var(--overlay);
-  backdrop-filter: none; /* ensure overlay does not add blur */
+    background: var(--overlay);
+  backdrop-filter: blur(8px); /* làm mờ nền phía sau modal */
   display:flex;
   align-items:flex-start;
   justify-content:center;
@@ -264,7 +264,7 @@ body.modal-open .conversation-item {
   opacity: 1 !important;
 }
 .modal-title{font-weight:700;margin-bottom:8px;color:var(--text)}
-.modal-body{font-size:13px;opacity:0.9;margin-bottom:14px}
+.modal-body{font-size:13px;opacity:1;margin-bottom:14px}
 .modal-actions{display:flex;justify-content:flex-end;gap:10px}
 .btn{padding:8px 12px;border-radius:8px;border:none;cursor:pointer;font-weight:700}
 .btn-secondary{background:transparent;color:var(--muted);border:1px solid rgba(255,255,255,0.04)}
