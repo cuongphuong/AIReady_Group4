@@ -10,9 +10,13 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
   const [notice, setNotice] = useState('')
   const [value, setValue] = useState('')
   const [sending, setSending] = useState(false)
+  const [bulkFile, setBulkFile] = useState(null)
+  const [bulkLoading, setBulkLoading] = useState(false)
+  const [isDraggingBulk, setIsDraggingBulk] = useState(false)
   const listRef = useRef(null)
   const composeRef = useRef(null)
   const fileRef = useRef(null)
+  const bulkFileRef = useRef(null)
   const pendingRef = useRef(null)
 
   useEffect(() => {
@@ -153,7 +157,148 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
   }
 
   function triggerUpload() {
-    if (fileRef.current) fileRef.current.click()
+    // Show context menu or directly trigger bulk upload
+    if (bulkFileRef.current) bulkFileRef.current.click()
+  }
+
+  async function handleBulkFile(e) {
+    const f = e.target.files?.[0]
+    if (!f) return
+
+    const lower = f.name.toLowerCase()
+    if (!lower.match(/\.(csv|xlsx|xls)$/)) {
+      setNotice('❌ Chỉ hỗ trợ CSV, XLSX, XLS')
+      setTimeout(() => setNotice(''), 3000)
+      e.target.value = ''
+      return
+    }
+
+    setBulkFile(f)
+    e.target.value = ''
+  }
+
+  async function uploadBulkFile() {
+    if (!bulkFile) {
+      setNotice('❌ Chưa chọn file')
+      return
+    }
+
+    setBulkLoading(true)
+    setNotice('')
+    
+    try {
+      const formData = new FormData()
+      formData.append('file', bulkFile)
+
+      // Tạo chat item của user khi upload file
+      const now = new Date()
+      const time = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      const userMsg = {
+        id: Date.now(),
+        role: 'user',
+        text: `📄 Đã upload file: ${bulkFile.name}`,
+        time
+      }
+      // Thêm bubble bot trạng thái typing
+      const botTyping = {
+        id: Date.now() + 9999,
+        role: 'assistant',
+        text: '',
+        time: '',
+        animate: true,
+        typing: true
+      }
+      const nextUser = [...messages, userMsg, botTyping]
+      setMessages(nextUser)
+      if (chat) onUpdateChat({ ...chat, messages: nextUser })
+
+      // Gọi API upload
+      const response = await fetch('http://localhost:8000/upload', {
+        method: 'POST',
+        body: formData
+      })
+      if (!response.ok) {
+        let errDetail = `HTTP ${response.status}`
+        try {
+          const errData = await response.json()
+          errDetail = errData.detail || errDetail
+        } catch (e) {
+          const errText = await response.text()
+          errDetail = errText || errDetail
+        }
+        throw new Error(errDetail)
+      }
+      const data = await response.json()
+      window.lastUploadResults = {
+        filename: bulkFile.name,
+        results: data.results
+      }
+      // Thay thế bubble bot typing bằng kết quả bot
+      const bot = {
+        id: Date.now() + 1,
+        role: 'assistant',
+        text: `✅ Đã phân loại ${data.classified_rows}/${data.total_rows} bugs.`,
+        time,
+        animate: true,
+        hasDownloadButton: true // Flag for download button
+      }
+      // Xóa bubble bot typing cuối cùng, thêm bot kết quả
+      setMessages((prev) => {
+        const arr = [...prev]
+        // Tìm và thay thế bubble bot typing cuối cùng
+        const idx = arr.findIndex(m => m.role === 'assistant' && m.typing)
+        if (idx >= 0) {
+          arr.splice(idx, 1, bot)
+          return arr
+        }
+        return [...arr, bot]
+      })
+      if (chat) onUpdateChat({ ...chat, messages: [...nextUser.filter(m=>!(m.role==='assistant'&&m.typing)), bot] })
+      setBulkFile(null)
+      setNotice('✅ Upload thành công! Có thể tải Excel')
+      setTimeout(() => setNotice(''), 2000)
+    } catch (err) {
+      console.error('Upload error:', err)
+      setNotice(`❌ Upload lỗi: ${err.message}`)
+      setTimeout(() => setNotice(''), 3000)
+    } finally {
+      setBulkLoading(false)
+    }
+  }
+
+  async function downloadExcel() {
+    if (!window.lastUploadResults) {
+      setNotice('❌ Không có kết quả để tải')
+      return
+    }
+
+    try {
+      const response = await fetch('http://localhost:8000/download-excel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ results: window.lastUploadResults.results })
+      })
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`)
+      }
+
+      const blob = await response.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `classification_${Date.now()}.xlsx`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      window.URL.revokeObjectURL(url)
+      
+      setNotice('✅ Tải Excel thành công!')
+      setTimeout(() => setNotice(''), 2000)
+    } catch (err) {
+      setNotice(`❌ Tải Excel lỗi: ${err.message}`)
+      setTimeout(() => setNotice(''), 3000)
+    }
   }
 
   async function handleFile(e) {
@@ -291,14 +436,31 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
         </button>
         {notice && <div className="chat-notice">{notice}</div>}
       </div>
+
       <div className="messages" ref={listRef}>
         {messages.map((m) => (
-          <Message key={m.id} role={m.role} text={m.text} time={m.time} />
+          <Message 
+            key={m.id} 
+            role={m.role} 
+            text={m.text} 
+            time={m.time}
+            animate={m.animate}
+            typing={m.typing}
+            hasDownloadButton={m.hasDownloadButton}
+            onDownload={m.hasDownloadButton ? downloadExcel : null}
+          />
         ))}
       </div>
 
       <div className="composer">
         <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls" onChange={handleFile} style={{ display: 'none' }} />
+        <input 
+          ref={bulkFileRef} 
+          type="file" 
+          accept=".csv,.xlsx,.xls" 
+          onChange={handleBulkFile} 
+          style={{ display: 'none' }} 
+        />
 
         <div className="composer-pill" aria-hidden={!chat}>
           <button className="pill-add" onClick={triggerUpload} title="Add file" aria-label="Add">
@@ -317,14 +479,71 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
           />
 
           <div className="pill-actions">
-            <button className="icon-btn mic" title="Voice">
+            <button 
+              className="icon-btn mic" 
+              title="Voice"
+            >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 1v10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/><rect x="7" y="3" width="10" height="14" rx="5" stroke="currentColor" strokeWidth="1.8"/></svg>
             </button>
-            <button className="icon-btn send" onClick={sendMessage} disabled={!chat || sending || !value.trim()} title="Gửi">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M22 2L11 13" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/><path d="M22 2L15 22l-4-9-9-4 20-7z" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            <button
+              className="icon-btn send"
+              onClick={bulkFile ? uploadBulkFile : sendMessage}
+              disabled={!chat || sending || (bulkFile ? bulkLoading : !value.trim())}
+              title={bulkFile ? "📤 Upload & Gửi" : "Gửi"}
+            >
+              {bulkFile ? "📤" : (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M22 2L11 13" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/><path d="M22 2L15 22l-4-9-9-4 20-7z" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              )}
             </button>
           </div>
         </div>
+
+        {/* Bulk File Status */}
+        {bulkFile && (
+          <div style={{
+            padding: '8px 12px',
+            backgroundColor: 'var(--surface)',
+            borderTop: '1px solid var(--border)',
+            display: 'flex',
+            gap: '8px',
+            alignItems: 'center',
+            fontSize: '13px'
+          }}>
+            <span style={{ flex: 1 }}>📄 {bulkFile.name}</span>
+            <button
+              onClick={uploadBulkFile}
+              disabled={bulkLoading}
+              style={{
+                padding: '4px 10px',
+                backgroundColor: '#28a745',
+                color: 'white',
+                border: 'none',
+                borderRadius: '3px',
+                cursor: bulkLoading ? 'not-allowed' : 'pointer',
+                fontSize: '12px',
+                fontWeight: 'bold',
+                opacity: bulkLoading ? 0.6 : 1
+              }}
+            >
+              {bulkLoading ? '⏳' : '📤'}
+            </button>
+            <button
+              onClick={() => setBulkFile(null)}
+              disabled={bulkLoading}
+              style={{
+                padding: '4px 8px',
+                backgroundColor: '#6c757d',
+                color: 'white',
+                border: 'none',
+                borderRadius: '3px',
+                cursor: 'pointer',
+                fontSize: '12px'
+              }}
+            >
+              ✕
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )

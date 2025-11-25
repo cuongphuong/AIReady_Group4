@@ -2,3 +2,7 @@ fastapi
 uvicorn[standard]
 python-dotenv
 openai
+pydantic
+pandas
+openpyxl
+python-multipart

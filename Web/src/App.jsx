@@ -28,6 +28,8 @@ export default function App() {
     return 'dark'
   })
 
+  const [showFileUpload, setShowFileUpload] = useState(false)
+
   useEffect(() => {
     document.documentElement.classList.toggle('theme-light', theme === 'light')
     document.documentElement.classList.toggle('theme-dark', theme === 'dark')
