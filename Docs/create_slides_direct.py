@@ -268,8 +268,8 @@ def create_thank_you_slide(prs):
     contact_frame = contact_box.text_frame
     
     contact_info = [
-        "📧 Email: group4@aiready.edu.vn",
-        "💻 GitHub: github.com/cuongphuong/AIReady_Group4",
+        "📧 Email: group4@bugclassifier.edu.vn",
+        "💻 GitHub: github.com/cuongphuong/BugClassifier_Group4",
         "",
         "💬 Mời câu hỏi & trao đổi",
     ]
@@ -295,7 +295,7 @@ def create_thank_you_slide(prs):
     footer_frame = footer_box.text_frame
     
     p = footer_frame.paragraphs[0]
-    p.text = "AIReady - Group 4"
+    p.text = "BugClassifier - Group 4"
     p.font.size = Pt(18)
     p.font.italic = True
     p.font.color.rgb = RGBColor(180, 180, 180)
@@ -311,7 +311,7 @@ def main():
     # Slide 1: Mở đầu
     create_title_slide(prs, 
         "Chatbot Phân Loại Bug Report",
-        "AIReady - Group 4\nNgày: 22/11/2025"
+        "BugClassifier - Group 4\nNgày: 22/11/2025"
     )
     
     # Slide 2: Bối cảnh & Vấn đề

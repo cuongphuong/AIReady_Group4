@@ -15,11 +15,11 @@ client = openai.OpenAI(
 
 # 2. Danh sách nhãn bug
 BUG_LABELS = {
-  "UI": "Kiểm tra về mặt hiển thị, căn lề, màu sắc của item, ...",
-  "Performance": "Hiệu suất của ứng dụng, thời gian xử lý, thời gian load ứng dụng, ...",
-  "Security": "Bảo mật dữ liệu, SQL injection, phân quyền truy cập, ...",
-  "Functional": "Logic xử lý không đúng, điều kiện xử lý không đúng, đọc ghi dữ liệu sai điều kiện, call API không đúng, validate sai item, ...",
-  "Data": "Dữ liệu test không hợp lệ, dữ liệu input vào màn hình không hợp lệ, file data upload không đúng, ..."
+  "UI": "Kiểm tra về mặt hiển thị, căn lề, màu sắc của item",
+  "Performance": "Hiệu suất của ứng dụng, thời gian xử lý, thời gian load ứng dụng",
+  "Security": "Bảo mật dữ liệu, SQL injection, phân quyền truy cập",
+  "Functional": "Logic xử lý không đúng, điều kiện xử lý không đúng, đọc ghi dữ liệu sai điều kiện, call API không đúng, validate sai item",
+  "Data": "Dữ liệu test không hợp lệ, dữ liệu input vào màn hình không hợp lệ, file data upload không đúng"
 }
 
 # 3. Ví dụ mẫu cho few-shot
@@ -92,3 +92,4 @@ bug_report = input("Nhập nội dung bug report: ")
 # 6. Phân loại và hiển thị kết quả
 label = classify_bug(bug_report)
 print(f"\nBug report: {bug_report}\nPhân loại: {label}")
+input(".")
