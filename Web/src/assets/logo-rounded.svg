@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- BugClassifier Chat circular icon (for favicon / avatar) -->
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="BugClassifier Chat icon">
+  <defs>
+    <linearGradient id="g2" x1="0" x2="1">
+      <stop offset="0" stop-color="#7b61ff"/>
+      <stop offset="1" stop-color="#2b6ef6"/>
+    </linearGradient>
+    <filter id="f2" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="6" stdDeviation="12" flood-color="#071022" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+
+  <circle cx="256" cy="256" r="230" fill="url(#g2)" filter="url(#f2)" />
+
+  <!-- simplified chat bubble + bug (white) -->
+  <g transform="translate(130,120) scale(0.7)">
+    <path d="M20 30c0-27 21-48 48-48h164c27 0 48 21 48 48v80c0 27-21 48-48 48H104l-48 40V30z" fill="#fff"/>
+    <g transform="translate(120,50) scale(0.7)">
+      <circle cx="0" cy="0" r="18" fill="#7b61ff"/>
+      <path d="M-10 10c-6 8-18 8-26 2" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+    </g>
+  </g>
+</svg>
