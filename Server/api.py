@@ -301,13 +301,13 @@ async def download_excel(req: DownloadExcelRequest):
         cell.font = header_font
         cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
     
-    # Write data rows
-    for row_idx, result in enumerate(req.results, 2):
+    # Sắp xếp kết quả theo label
+    sorted_results = sorted(req.results, key=lambda r: (r.label or '').lower())
+    for row_idx, result in enumerate(sorted_results, 2):
         # Parse text to extract No and Bug
         parts = result.text.split(' | ')
         no = parts[0] if parts else str(row_idx - 1)
         bug = ' | '.join(parts[1:]) if len(parts) > 1 else result.text
-        
         row_data = [
             no,
             bug,
@@ -316,7 +316,6 @@ async def download_excel(req: DownloadExcelRequest):
             result.team or '',
             result.severity or ''
         ]
-        
         for col, value in enumerate(row_data, 1):
             cell = ws.cell(row=row_idx, column=col)
             cell.value = value

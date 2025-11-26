@@ -233,11 +233,19 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
         filename: bulkFile.name,
         results: data.results
       }
-      // Thay thế bubble bot typing bằng kết quả bot
+      // Tính số lượng bug cho từng label
+      const labelCounts = {};
+      (data.results || []).forEach(item => {
+        const label = item.label || 'Chưa phân loại';
+        labelCounts[label] = (labelCounts[label] || 0) + 1;
+      });
+      let labelSummary = Object.entries(labelCounts)
+        .map(([label, count]) => `- ${label}: ${count} bug`)
+        .join('\n');
       const bot = {
         id: Date.now() + 1,
         role: 'assistant',
-        text: `✅ Đã phân loại ${data.classified_rows}/${data.total_rows} bugs.`,
+        text: `✅ Đã phân loại ${data.classified_rows}/${data.total_rows} bugs.\n${labelSummary}`,
         time,
         animate: true,
         hasDownloadButton: true // Flag for download button
