@@ -4,9 +4,44 @@ import Message from './Message'
 // when handling files so the dev server does not fail if they are not installed.
 
 export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
-  const [messages, setMessages] = useState(chat?.messages ?? [
-    { id: 1, role: 'assistant', text: 'Chào bạn! Tôi có thể giúp gì cho bạn hôm nay?', time: '09:30' }
-  ])
+  const [messages, setMessages] = useState(chat?.messages ?? [])
+  
+  // Function để lưu message vào database
+  async function saveMessageToDB(role, content, fileUploadId = null) {
+    if (!chat?.sessionId) {
+      console.warn('Cannot save message: no sessionId', { chat })
+      return
+    }
+    
+    console.log('Saving message to DB:', { 
+      sessionId: chat.sessionId, 
+      role, 
+      content: content.substring(0, 50),
+      fileUploadId 
+    })
+    
+    try {
+      const response = await fetch(`http://localhost:8000/chat/sessions/${chat.sessionId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          role, 
+          content,
+          file_upload_id: fileUploadId
+        })
+      })
+      
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error('Failed to save message - Server error:', response.status, errorText)
+      } else {
+        const result = await response.json()
+        console.log('Message saved successfully:', result)
+      }
+    } catch (err) {
+      console.error('Failed to save message to DB:', err)
+    }
+  }
   const [notice, setNotice] = useState('')
   const [value, setValue] = useState('')
   const [sending, setSending] = useState(false)
@@ -51,10 +86,80 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
     } catch (e) {}
   }, [value])
 
-  // sync when chat changes
+  // sync when chat changes - load messages from database if needed
   useEffect(() => {
-    setMessages(chat?.messages ?? [])
-  }, [chat?.id])
+    async function loadMessages() {
+      if (!chat?.sessionId) {
+        setMessages([])
+        return
+      }
+      
+      // Nếu đã có messages từ initial load, dùng luôn
+      if (chat.messages && chat.messages.length > 0) {
+        setMessages(chat.messages)
+        return
+      }
+      
+      // Nếu chưa có, load từ database
+      try {
+        const response = await fetch(
+          `http://localhost:8000/chat/sessions/${chat.sessionId}/messages?limit=100`
+        )
+        if (!response.ok) throw new Error('Failed to load messages')
+        const data = await response.json()
+        
+        const loadedMessages = await Promise.all((data.messages || []).map(async (msg) => {
+          // Kiểm tra nếu message có file_upload_id (là kết quả upload file)
+          const hasFileUpload = msg.file_upload_id !== null && msg.file_upload_id !== undefined
+          
+          // Nếu có file_upload_id, load classification results từ DB
+          if (hasFileUpload) {
+            try {
+              const resultsResponse = await fetch(
+                `http://localhost:8000/classification-results/${msg.file_upload_id}`
+              )
+              if (resultsResponse.ok) {
+                const resultsData = await resultsResponse.json()
+                // Lưu vào window để download
+                window.lastUploadResults = {
+                  results: resultsData.results,
+                  file_upload_id: msg.file_upload_id
+                }
+                console.log('Loaded classification results for file_upload_id:', msg.file_upload_id)
+              }
+            } catch (err) {
+              console.warn('Failed to load classification results:', err)
+            }
+          }
+          
+          return {
+            id: msg.id,
+            role: msg.role,
+            text: msg.content,
+            time: new Date(msg.timestamp).toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit'
+            }),
+            // Show download button nếu message có file_upload_id
+            hasDownloadButton: hasFileUpload,
+            file_upload_id: msg.file_upload_id
+          }
+        }))
+        
+        setMessages(loadedMessages)
+        
+        // Update chat object để không phải load lại
+        if (onUpdateChat) {
+          onUpdateChat({ ...chat, messages: loadedMessages })
+        }
+      } catch (err) {
+        console.warn('Failed to load messages:', err)
+        setMessages([])
+      }
+    }
+    
+    loadMessages()
+  }, [chat?.id, chat?.sessionId])
 
   function sendMessage() {
     const text = value.trim()
@@ -66,12 +171,14 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
     setMessages(next)
     setValue('')
     setSending(true)
+    
+    // Lưu user message vào database
+    saveMessageToDB('user', text)
     // Append a placeholder assistant "typing" message so user sees immediate feedback
     const placeholder = { id: Date.now() + 9999, role: 'assistant', text: 'Đang phân loại...', time: '', animate: true, typing: true }
     pendingRef.current = placeholder.id
     const nextWithPlaceholder = [...next, placeholder]
     setMessages(nextWithPlaceholder)
-    if (chat) onUpdateChat({ ...chat, messages: next })
     // send text to backend classifier
     ;(async () => {
       try {
@@ -109,6 +216,10 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
           time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           animate: true
         }
+        
+        // Lưu assistant message vào database
+        saveMessageToDB('assistant', botText)
+        
         // replace placeholder message if present, otherwise append
         setMessages((prev) => {
           if (!pendingRef.current) return [...prev, bot]
@@ -121,7 +232,6 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
           }
           return [...prev, bot]
         })
-        if (chat) onUpdateChat({ ...chat, messages: [...next.filter(m=>m.role!=='assistant'), bot] })
       } catch (err) {
         const bot = {
           id: Date.now() + 2,
@@ -141,7 +251,6 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
           }
           return [...prev, bot]
         })
-        if (chat) onUpdateChat({ ...chat, messages: [...next.filter(m=>m.role!=='assistant'), bot] })
       } finally {
         setSending(false)
       }
@@ -199,6 +308,10 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
         text: `📄 Đã upload file: ${bulkFile.name}`,
         time
       }
+      
+      // Lưu upload message vào database
+      saveMessageToDB('user', `📄 Đã upload file: ${bulkFile.name}`)
+      
       // Thêm bubble bot trạng thái typing
       const botTyping = {
         id: Date.now() + 9999,
@@ -210,10 +323,12 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
       }
       const nextUser = [...messages, userMsg, botTyping]
       setMessages(nextUser)
-      if (chat) onUpdateChat({ ...chat, messages: nextUser })
 
-      // Gọi API upload
-      const response = await fetch('http://localhost:8000/upload', {
+      // Gọi API upload với session_id
+      const uploadUrl = chat?.sessionId 
+        ? `http://localhost:8000/upload?session_id=${chat.sessionId}`
+        : 'http://localhost:8000/upload'
+      const response = await fetch(uploadUrl, {
         method: 'POST',
         body: formData
       })
@@ -229,10 +344,15 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
         throw new Error(errDetail)
       }
       const data = await response.json()
+      const fileUploadId = data.file_upload_id
+      
+      // Lưu results vào memory để download
       window.lastUploadResults = {
         filename: bulkFile.name,
-        results: data.results
+        results: data.results,
+        file_upload_id: fileUploadId
       }
+      
       // Tính số lượng bug cho từng label
       const labelCounts = {};
       (data.results || []).forEach(item => {
@@ -250,6 +370,10 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
         animate: true,
         hasDownloadButton: true // Flag for download button
       }
+      
+      // Lưu classification result vào database với file_upload_id
+      saveMessageToDB('assistant', `✅ Đã phân loại ${data.classified_rows}/${data.total_rows} bugs.\n${labelSummary}`, fileUploadId)
+      
       // Xóa bubble bot typing cuối cùng, thêm bot kết quả
       setMessages((prev) => {
         const arr = [...prev]
@@ -261,7 +385,6 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
         }
         return [...arr, bot]
       })
-      if (chat) onUpdateChat({ ...chat, messages: [...nextUser.filter(m=>!(m.role==='assistant'&&m.typing)), bot] })
       setBulkFile(null)
       setNotice('✅ Upload thành công! Có thể tải Excel')
       setTimeout(() => setNotice(''), 2000)
@@ -274,7 +397,25 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
     }
   }
 
-  async function downloadExcel() {
+  async function downloadExcel(messageWithUpload) {
+    // Nếu có file_upload_id trong message, load results từ DB
+    if (messageWithUpload?.file_upload_id && (!window.lastUploadResults || window.lastUploadResults.file_upload_id !== messageWithUpload.file_upload_id)) {
+      try {
+        const resultsResponse = await fetch(
+          `http://localhost:8000/classification-results/${messageWithUpload.file_upload_id}`
+        )
+        if (resultsResponse.ok) {
+          const resultsData = await resultsResponse.json()
+          window.lastUploadResults = {
+            results: resultsData.results,
+            file_upload_id: messageWithUpload.file_upload_id
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load classification results:', err)
+      }
+    }
+    
     if (!window.lastUploadResults) {
       setNotice('❌ Không có kết quả để tải')
       return
@@ -381,7 +522,6 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
     const msg = { id: Date.now(), role: 'user', text: `Uploaded file: ${filename}\n\nPreview:\n${previewText}`, time }
     const next = [...messages, msg]
     setMessages(next)
-    if (chat) onUpdateChat({ ...chat, messages: next })
   }
 
   // Extract possible bug items from messages and trigger CSV download
@@ -455,7 +595,7 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
             animate={m.animate}
             typing={m.typing}
             hasDownloadButton={m.hasDownloadButton}
-            onDownload={m.hasDownloadButton ? downloadExcel : null}
+            onDownload={m.hasDownloadButton ? () => downloadExcel(m) : null}
           />
         ))}
       </div>

@@ -9,6 +9,20 @@ import io
 import csv
 from typing import Optional, List
 
+# Import database and file storage
+try:
+    from database import (
+        init_db, create_chat_session, add_chat_message, get_chat_messages,
+        save_file_upload, save_classification_results, get_file_uploads,
+        get_all_chat_sessions, delete_chat_session, update_chat_session_title,
+        get_statistics
+    )
+    from file_storage import save_uploaded_file, get_file_size, init_upload_directory
+    DATABASE_ENABLED = True
+except ImportError as e:
+    print(f"Warning: Database not available: {e}")
+    DATABASE_ENABLED = False
+
 # Try to import openpyxl for Excel generation
 try:
     from openpyxl import Workbook
@@ -38,15 +52,23 @@ except ImportError:
 
 app = FastAPI(title="BugClassifier API", version="0.1")
 
+# Initialize database and upload directory on startup
+@app.on_event("startup")
+async def startup_event():
+    if DATABASE_ENABLED:
+        init_db()
+        init_upload_directory()
+        print("Database and file storage initialized")
+
 # Store latest classification results in memory for download (session-based)
 latest_results = None
 
 # Allow the Web frontend (served from localhost:5173) to call this API during development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:5174/"],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -71,10 +93,23 @@ class UploadResponse(BaseModel):
     total_rows: int
     classified_rows: int
     results: list[ClassifyItem]
+    file_upload_id: Optional[int] = None
 
 
 class DownloadExcelRequest(BaseModel):
     results: list[ClassifyItem]
+
+class CreateSessionRequest(BaseModel):
+    session_id: str
+    title: str = "Untitled"
+
+class UpdateSessionRequest(BaseModel):
+    title: str
+
+class AddMessageRequest(BaseModel):
+    role: str
+    content: str
+    file_upload_id: Optional[int] = None
 
 @app.get("/health")
 async def health():
@@ -114,10 +149,11 @@ async def classify(req: ClassifyRequest):
 
 
 @app.post("/upload", response_model=UploadResponse)
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(file: UploadFile = File(...), session_id: Optional[str] = None):
     """
     Upload CSV/XLSX file với columns: No, Nội dung bug
     Trả về kết quả phân loại: No, Nội dung bug, Label, Reason, Team, Severity
+    Optional: session_id để liên kết với chat session
     """
     global latest_results
     
@@ -126,6 +162,13 @@ async def upload_file(file: UploadFile = File(...)):
     
     try:
         content = await file.read()
+        
+        # Save file to disk if database is enabled
+        file_path = None
+        file_size = len(content)
+        if DATABASE_ENABLED:
+            file_path = save_uploaded_file(content, file.filename)
+            file_size = get_file_size(file_path)
         
         # Parse CSV or Excel
         bugs_with_no = []
@@ -210,11 +253,29 @@ async def upload_file(file: UploadFile = File(...)):
             "classifications": classified
         }
         
+        # Save to database if enabled
+        upload_id = None
+        if DATABASE_ENABLED and file_path:
+            try:
+                upload_id = save_file_upload(
+                    session_id=session_id,
+                    filename=file.filename,
+                    file_path=file_path,
+                    file_size=file_size,
+                    total_rows=len(bugs_with_no),
+                    classified_rows=len(results)
+                )
+                # Save classification results
+                save_classification_results(upload_id, results)
+            except Exception as e:
+                print(f"Warning: Failed to save to database: {e}")
+        
         return {
             "filename": file.filename,
             "total_rows": len(bugs_with_no),
             "classified_rows": len(results),
-            "results": results
+            "results": results,
+            "file_upload_id": upload_id
         }
     
     except HTTPException:
@@ -339,6 +400,127 @@ async def download_excel(req: DownloadExcelRequest):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename=classification_results.xlsx"}
     )
+
+
+# ===== Chat Session Management Endpoints =====
+
+@app.post("/chat/sessions")
+async def create_session(request: CreateSessionRequest):
+    """Create a new chat session"""
+    if not DATABASE_ENABLED:
+        raise HTTPException(status_code=503, detail="database not available")
+    
+    success = create_chat_session(request.session_id, request.title)
+    if not success:
+        raise HTTPException(status_code=409, detail="session already exists")
+    
+    return {"session_id": request.session_id, "title": request.title, "success": True}
+
+
+@app.get("/chat/sessions")
+async def list_sessions():
+    """Get all chat sessions"""
+    if not DATABASE_ENABLED:
+        raise HTTPException(status_code=503, detail="database not available")
+    
+    sessions = get_all_chat_sessions()
+    return {"sessions": sessions}
+
+
+@app.put("/chat/sessions/{session_id}")
+async def update_session(session_id: str, request: UpdateSessionRequest):
+    """Update chat session title"""
+    if not DATABASE_ENABLED:
+        raise HTTPException(status_code=503, detail="database not available")
+    
+    success = update_chat_session_title(session_id, request.title)
+    if not success:
+        raise HTTPException(status_code=404, detail="session not found")
+    
+    return {"session_id": session_id, "title": request.title, "success": True}
+
+
+@app.delete("/chat/sessions/{session_id}")
+async def delete_session(session_id: str):
+    """Delete a chat session and all related data"""
+    if not DATABASE_ENABLED:
+        raise HTTPException(status_code=503, detail="database not available")
+    
+    success = delete_chat_session(session_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="session not found")
+    
+    return {"deleted": True}
+
+
+@app.post("/chat/sessions/{session_id}/messages")
+async def add_message(session_id: str, request: AddMessageRequest):
+    """Add a message to chat session"""
+    if not DATABASE_ENABLED:
+        raise HTTPException(status_code=503, detail="database not available")
+    
+    if request.role not in ["user", "assistant"]:
+        raise HTTPException(status_code=400, detail="role must be 'user' or 'assistant'")
+    
+    message_id = add_chat_message(session_id, request.role, request.content, request.file_upload_id)
+    return {"message_id": message_id, "session_id": session_id, "success": True}
+
+
+@app.get("/chat/sessions/{session_id}/messages")
+async def get_messages(session_id: str, limit: Optional[int] = None):
+    """Get all messages for a chat session"""
+    if not DATABASE_ENABLED:
+        raise HTTPException(status_code=503, detail="database not available")
+    
+    messages = get_chat_messages(session_id, limit)
+    return {"messages": messages}
+
+
+@app.get("/uploads")
+async def list_uploads(session_id: Optional[str] = None, limit: int = 50):
+    """Get file uploads, optionally filtered by session"""
+    if not DATABASE_ENABLED:
+        raise HTTPException(status_code=503, detail="database not available")
+    
+    uploads = get_file_uploads(session_id, limit)
+    return {"uploads": uploads}
+
+
+@app.get("/statistics")
+async def get_stats():
+    """Get statistics"""
+    if not DATABASE_ENABLED:
+        raise HTTPException(status_code=503, detail="database not available")
+    
+    stats = get_statistics()
+    return stats
+
+
+@app.get("/classification-results/{file_upload_id}")
+async def get_classification_by_upload_id(file_upload_id: int):
+    """Get classification results for a file upload"""
+    if not DATABASE_ENABLED:
+        raise HTTPException(status_code=503, detail="database not available")
+    
+    try:
+        from database import get_classification_results
+        db_results = get_classification_results(file_upload_id)
+        
+        # Map DB results to API model
+        results = []
+        for r in db_results:
+            results.append({
+                "text": r.get('bug_text', ''),
+                "label": r.get('label', ''),
+                "raw": r.get('reason', ''),
+                "team": r.get('team'),
+                "severity": r.get('severity')
+            })
+            
+        return {"file_upload_id": file_upload_id, "results": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # uvicorn entrypoint hint
 # run with: uvicorn Server.api:app --reload --port 8000

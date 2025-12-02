@@ -3,19 +3,7 @@ import Sidebar from './components/Sidebar'
 import ChatWindow from './components/ChatWindow'
 import logoRounded from './assets/logo-rounded.svg'
 
-const STORAGE_KEY = 'bugclassifier_chats_v1'
 const THEME_KEY = 'bugclassifier_theme'
-
-const sampleChats = [
-  {
-    id: 1,
-    title: 'Hỗ trợ kỹ thuật',
-    messages: [
-      { id: 1, role: 'assistant', text: 'Chào bạn! Tôi có thể giúp gì cho bạn hôm nay?', time: '09:30' }
-    ]
-  },
-  { id: 2, title: 'Ý tưởng sản phẩm', messages: [] }
-]
 
 export default function App() {
   const [theme, setTheme] = useState(() => {
@@ -60,30 +48,129 @@ export default function App() {
     setTheme((t) => (t === 'dark' ? 'light' : 'dark'))
   }
 
-  const [chats, setChats] = useState(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY)
-      return raw ? JSON.parse(raw) : sampleChats
-    } catch (e) {
-      return sampleChats
-    }
-  })
+  const [chats, setChats] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [currentChatId, setCurrentChatId] = useState(null)
 
-  const [currentChatId, setCurrentChatId] = useState(() => chats[0]?.id ?? null)
-
+  // Load chats từ database khi mount
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(chats))
-    } catch (e) {
-      console.warn('Failed to save chats', e)
+    async function loadChatsFromDB() {
+      try {
+        const response = await fetch('http://localhost:8000/chat/sessions')
+        if (!response.ok) throw new Error('Failed to load sessions')
+        const data = await response.json()
+        
+        // Map sessions từ DB sang format của UI
+        const loadedChats = await Promise.all(
+          (data.sessions || []).map(async (session) => {
+            // Load messages cho mỗi session
+            try {
+              const msgResponse = await fetch(
+                `http://localhost:8000/chat/sessions/${session.session_id}/messages?limit=100`
+              )
+              const msgData = await msgResponse.json()
+              
+              return {
+                id: session.id,
+                sessionId: session.session_id,
+                title: session.title,
+                messages: (msgData.messages || []).map(msg => ({
+                  id: msg.id,
+                  role: msg.role,
+                  text: msg.content,
+                  time: new Date(msg.timestamp).toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  }),
+                  file_upload_id: msg.file_upload_id,
+                  hasDownloadButton: msg.file_upload_id !== null && msg.file_upload_id !== undefined
+                }))
+              }
+            } catch (err) {
+              console.warn(`Failed to load messages for session ${session.session_id}:`, err)
+              return {
+                id: session.id,
+                sessionId: session.session_id,
+                title: session.title,
+                messages: []
+              }
+            }
+          })
+        )
+        
+        setChats(loadedChats)
+        if (loadedChats.length > 0 && !currentChatId) {
+          setCurrentChatId(loadedChats[0].id)
+        }
+      } catch (err) {
+        console.warn('Failed to load chats from database:', err)
+        setChats([])
+      } finally {
+        setLoading(false)
+      }
     }
-  }, [chats])
+    
+    loadChatsFromDB()
+  }, [])
 
-  function createNewChat() {
+  async function createNewChat() {
+    const sessionId = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`
     const id = Date.now()
-    const newChat = { id, title: 'Untitled', messages: [] }
+    
+    console.log('Creating new chat:', { id, sessionId })
+    
+    // Tạo greeting message
+    const greetingMsg = {
+      id: 1,
+      role: 'assistant',
+      text: 'Chào bạn! Tôi có thể giúp gì cho bạn hôm nay?',
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    }
+    
+    const newChat = { id, sessionId, title: 'Untitled', messages: [greetingMsg] }
     setChats((s) => [newChat, ...s])
     setCurrentChatId(id)
+    
+    // Tạo session trong database
+    try {
+      console.log('Creating session in database...')
+      const response = await fetch('http://localhost:8000/chat/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: sessionId,
+          title: 'Untitled'
+        })
+      })
+      
+      if (response.ok) {
+        const result = await response.json()
+        console.log('Session created in DB:', result)
+        
+        // Lưu greeting message vào database
+        console.log('Saving greeting message...')
+        const msgResponse = await fetch(`http://localhost:8000/chat/sessions/${sessionId}/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            role: 'assistant',
+            content: 'Chào bạn! Tôi có thể giúp gì cho bạn hôm nay?'
+          })
+        })
+        
+        if (msgResponse.ok) {
+          const msgResult = await msgResponse.json()
+          console.log('Greeting message saved:', msgResult)
+        } else {
+          console.error('Failed to save greeting message:', msgResponse.status)
+        }
+      } else {
+        const errorText = await response.text()
+        console.error('Failed to create session:', response.status, errorText)
+      }
+    } catch (err) {
+      console.error('Failed to create session in database:', err)
+    }
   }
 
   function selectChat(id) {
@@ -91,18 +178,45 @@ export default function App() {
   }
 
   function updateChat(updated) {
+    // Cập nhật local state để UI reflect ngay
     setChats((prev) => prev.map((c) => (c.id === updated.id ? updated : c)))
   }
 
-  function renameChat(id, newTitle) {
+  async function renameChat(id, newTitle) {
+    const chat = chats.find(c => c.id === id)
     setChats((prev) => prev.map((c) => (c.id === id ? { ...c, title: newTitle } : c)))
+    
+    // Update title trong database
+    if (chat?.sessionId) {
+      try {
+        await fetch(`http://localhost:8000/chat/sessions/${chat.sessionId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: newTitle })
+        })
+      } catch (err) {
+        console.warn('Failed to update session title:', err)
+      }
+    }
   }
 
-  function deleteChat(id) {
+  async function deleteChat(id) {
+    const chat = chats.find(c => c.id === id)
     const keep = chats.filter((c) => c.id !== id)
     setChats(keep)
     if (currentChatId === id) {
       setCurrentChatId(keep[0]?.id ?? null)
+    }
+    
+    // Delete session trong database (cascade delete messages + uploads)
+    if (chat?.sessionId) {
+      try {
+        await fetch(`http://localhost:8000/chat/sessions/${chat.sessionId}`, {
+          method: 'DELETE'
+        })
+      } catch (err) {
+        console.warn('Failed to delete session:', err)
+      }
     }
   }
 
@@ -155,7 +269,20 @@ export default function App() {
         <div className="app-body--layout">
           <Sidebar chats={chats} currentChatId={currentChatId} onNewChat={createNewChat} onSelect={selectChat} onDelete={deleteChat} onRename={renameChat} />
           <main className="main-chat">
-            <ChatWindow chat={currentChat} onUpdateChat={updateChat} />
+            {loading ? (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                height: '100%',
+                color: 'var(--text-secondary)',
+                fontSize: '14px'
+              }}>
+                Đang tải chats...
+              </div>
+            ) : (
+              <ChatWindow chat={currentChat} onUpdateChat={updateChat} />
+            )}
           </main>
         </div>
       </div>

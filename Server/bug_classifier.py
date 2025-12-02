@@ -10,6 +10,7 @@ import openai
 load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
 base_url = os.getenv("OPENAI_API_BASE_URL")
+model_name = os.getenv("MODEL_NAME", "gpt-5")
 
 # 1. Khởi tạo client với API key
 client = openai.OpenAI(
@@ -324,13 +325,13 @@ def _quick_heuristic_for_text(description: str):
 
 
 async def classify_bug(description: str):
-    """Async classify a single bug description. Uses quick heuristic first, otherwise calls the LLM."""
+    """Async classify a single bug description. Uses quick heuristic first, otherwise calls the LLM with function calling."""
     # heuristic quick path
     h = _quick_heuristic_for_text(description)
     if h:
         return h
 
-    # Build prompt for single item classification (keeps compatibility with previous behavior)
+    # Build prompt for single item classification
     example_text = "\n".join([
         f"Bug report: \"{ex['description']}\"\nPhân loại: {ex['label']}"
         for ex in FEW_SHOT_EXAMPLES
@@ -345,27 +346,51 @@ Ví dụ phân loại (few-shot):
 
 Nhiệm vụ: Hãy phân loại báo cáo bug dưới đây vào MỘT trong các nhãn trên.
 
-Yêu cầu về câu trả lời:
-- Trả về DUY NHẤT một đối tượng JSON hợp lệ, KHÔNG kèm bình luận nào khác.
-- JSON phải có ít nhất 2 khóa: "label" và "reason".
-- Có thể bổ sung: "team", "severity" (Low|Medium|High|Critical), "tags" (mảng).
-- Giá trị "label" PHẢI chính xác khớp tên nhãn.
-
 Báo cáo bug:
 <<<
 {description}
 >>>
-
-Chỉ trả về JSON như ví dụ.
     """
 
-    model_name = "gpt-5"
+    # Define function for structured output
+    classify_function = {
+        "name": "classify_bug_report",
+        "description": "Phân loại bug report vào một trong các nhãn định sẵn",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "label": {
+                    "type": "string",
+                    "enum": list(BUG_LABELS.keys()),
+                    "description": "Nhãn phân loại bug (phải chính xác khớp một trong các nhãn có sẵn)"
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Lý do phân loại (một câu ngắn bằng tiếng Việt, không quá 30 từ)"
+                },
+                "team": {
+                    "type": "string",
+                    "enum": list(TEAM_GROUPS.keys()),
+                    "description": "Team chịu trách nhiệm xử lý bug này"
+                },
+                "severity": {
+                    "type": "string",
+                    "enum": ["Low", "Medium", "High", "Critical"],
+                    "description": "Mức độ nghiêm trọng của bug"
+                }
+            },
+            "required": ["label", "reason"]
+        }
+    }
+
     call_kwargs = {
         "model": model_name,
         "messages": [
-            {"role": "system", "content": "You are a strict JSON responder that classifies bug reports."},
+            {"role": "system", "content": "You are an expert QA bug classifier. Analyze bug reports and classify them accurately."},
             {"role": "user", "content": prompt}
         ],
+        "functions": [classify_function],
+        "function_call": {"name": "classify_bug_report"},
         "max_tokens": 1500,
     }
     if not model_name.startswith("gpt-5"):
@@ -373,31 +398,49 @@ Chỉ trả về JSON như ví dụ.
 
     response = await _call_model_with_retries(call_kwargs)
 
-    raw = response.choices[0].message.content.strip()
-
-    # Try JSON parse
-    try:
-        parsed = json.loads(raw)
-        label = parsed.get('label')
-        reason = parsed.get('reason') or ''
-        team = parsed.get('team')
-        if label and label in BUG_LABELS:
-            if not team:
-                team = LABEL_TO_TEAM.get(label)
-            return {'label': label, 'reason': reason.strip(), 'team': team}
-    except Exception:
-        pass
-
-    # Fallbacks
-    m = re.search(r"\b({})\b".format('|'.join(re.escape(k) for k in BUG_LABELS.keys())), raw)
-    if m:
-        return {'label': m.group(1), 'reason': raw}
-    return {'label': raw.strip(), 'reason': ''}
+    # Extract function call result
+    message = response.choices[0].message
+    if message.function_call:
+        try:
+            args = json.loads(message.function_call.arguments)
+            label = args.get('label')
+            reason = args.get('reason') or ''
+            team = args.get('team') or LABEL_TO_TEAM.get(label)
+            severity = args.get('severity')
+            
+            return {
+                'label': label,
+                'reason': reason.strip(),
+                'team': team,
+                'severity': severity
+            }
+        except Exception as e:
+            print(f"Function call parse error: {e}")
+    
+    # Fallback: try to parse content as JSON (for models that don't support function calling)
+    raw = message.content
+    if raw:
+        try:
+            parsed = json.loads(raw.strip())
+            label = parsed.get('label')
+            reason = parsed.get('reason') or ''
+            team = parsed.get('team') or LABEL_TO_TEAM.get(label)
+            if label and label in BUG_LABELS:
+                return {'label': label, 'reason': reason.strip(), 'team': team}
+        except Exception:
+            pass
+        
+        # Final fallback: regex search
+        m = re.search(r"\b({})\b".format('|'.join(re.escape(k) for k in BUG_LABELS.keys())), raw)
+        if m:
+            return {'label': m.group(1), 'reason': raw}
+    
+    return {'label': '', 'reason': 'classification_failed', 'team': None}
 
 
 async def batch_classify(descriptions: List[str]):
-    """Classify a list of descriptions. Use heuristic per-item first; batch remaining via a single LLM call.
-    Returns a list of dicts matching input order: {label, reason, team}.
+    """Classify a list of descriptions. Use heuristic per-item first; batch remaining via a single LLM call with function calling.
+    Returns a list of dicts matching input order: {label, reason, team, severity}.
     """
     results: List[Optional[dict]] = [None] * len(descriptions)
 
@@ -413,7 +456,7 @@ async def batch_classify(descriptions: List[str]):
         # all classified by heuristic
         return results
 
-    # Build batch prompt asking for a JSON array; include index so we can map back
+    # Build batch prompt
     input_list_text = "\n".join([f"[{idx}]: {descriptions[idx]}" for idx in remaining_indexes])
     example_text = "\n".join([
         f"Bug report: \"{ex['description']}\"\nPhân loại: {ex['label']}"
@@ -427,53 +470,100 @@ Bạn là một trợ lý phân loại bug chuyên gia QA. Các nhãn có sẵn 
 Ví dụ phân loại (few-shot):
 {example_text}
 
-Nhiệm vụ: Phân loại các báo cáo bug được liệt kê dưới đây. Trả về MỘT MẢNG JSON hợp lệ duy nhất, ví dụ:
-[
-  {{"index":0, "label":"UI", "reason":"...", "team":"Frontend Team"}},
-  {{"index":1, "label":"Backend", "reason":"...", "team":"Backend Team"}}
-]
-
-Yêu cầu:
-- Mỗi phần tử phải có khóa "index" (số nguyên tương ứng với vị trí input trong phần gửi này),
-- "label" phải là một trong các nhãn chính xác như danh sách,
-- "reason" là một câu ngắn bằng tiếng Việt (không quá 30 từ),
-- có thể kèm "team" (tên nhóm chịu trách nhiệm) và "severity" (Low|Medium|High|Critical),
-- Trả VỚI CHỈ một mảng JSON, KHÔNG kèm text nào khác.
+Nhiệm vụ: Phân loại các báo cáo bug được liệt kê dưới đây.
 
 Các báo cáo cần phân loại (format [index]: text):
 {input_list_text}
     """
 
-    model_name = "gpt-5"
+    # Define function for batch classification
+    batch_classify_function = {
+        "name": "batch_classify_bugs",
+        "description": "Phân loại nhiều bug reports cùng lúc",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "classifications": {
+                    "type": "array",
+                    "description": "Danh sách kết quả phân loại cho từng bug",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "index": {
+                                "type": "integer",
+                                "description": "Chỉ số của bug trong danh sách input"
+                            },
+                            "label": {
+                                "type": "string",
+                                "enum": list(BUG_LABELS.keys()),
+                                "description": "Nhãn phân loại bug"
+                            },
+                            "reason": {
+                                "type": "string",
+                                "description": "Lý do phân loại (câu ngắn bằng tiếng Việt, không quá 30 từ)"
+                            },
+                            "team": {
+                                "type": "string",
+                                "enum": list(TEAM_GROUPS.keys()),
+                                "description": "Team chịu trách nhiệm"
+                            },
+                            "severity": {
+                                "type": "string",
+                                "enum": ["Low", "Medium", "High", "Critical"],
+                                "description": "Mức độ nghiêm trọng"
+                            }
+                        },
+                        "required": ["index", "label", "reason"]
+                    }
+                }
+            },
+            "required": ["classifications"]
+        }
+    }
+
     call_kwargs = {
         "model": model_name,
         "messages": [
-            {"role": "system", "content": "You are a strict JSON responder that classifies bug reports into labels and teams."},
+            {"role": "system", "content": "You are an expert QA bug classifier. Analyze multiple bug reports and classify them accurately."},
             {"role": "user", "content": batch_prompt}
         ],
+        "functions": [batch_classify_function],
+        "function_call": {"name": "batch_classify_bugs"},
         "max_tokens": 4000,
     }
     if not model_name.startswith("gpt-5"):
         call_kwargs["temperature"] = 0.0
 
     response = await _call_model_with_retries(call_kwargs, retries=4, backoff_factor=0.6)
-    raw = response.choices[0].message.content.strip()
 
+    # Extract function call result
+    message = response.choices[0].message
     parsed_array = None
-    try:
-        parsed_array = json.loads(raw)
-        if not isinstance(parsed_array, list):
-            parsed_array = None
-    except Exception:
-        # try to extract a JSON array substring
-        m = re.search(r"(\[\s*\{[\s\S]*\}\s*\])", raw)
-        if m:
-            try:
-                parsed_array = json.loads(m.group(1))
-            except Exception:
+    
+    if message.function_call:
+        try:
+            args = json.loads(message.function_call.arguments)
+            parsed_array = args.get('classifications', [])
+        except Exception as e:
+            print(f"Function call parse error: {e}")
+    
+    # Fallback: try to parse content as JSON array
+    if not parsed_array and message.content:
+        raw = message.content.strip()
+        try:
+            parsed_array = json.loads(raw)
+            if not isinstance(parsed_array, list):
                 parsed_array = None
+        except Exception:
+            # try to extract a JSON array substring
+            m = re.search(r"(\[\s*\{[\s\S]*\}\s*\])", raw)
+            if m:
+                try:
+                    parsed_array = json.loads(m.group(1))
+                except Exception:
+                    parsed_array = None
 
-    # If parsed_array is valid, map items back to results
+    # Map parsed results back to results array
     if parsed_array:
         for item in parsed_array:
             try:
@@ -481,8 +571,14 @@ Các báo cáo cần phân loại (format [index]: text):
                 label = item.get('label')
                 reason = item.get('reason') or ''
                 team = item.get('team') or (LABEL_TO_TEAM.get(label) if label in LABEL_TO_TEAM else None)
+                severity = item.get('severity')
                 if 0 <= idx < len(results):
-                    results[idx] = {'label': label if label in BUG_LABELS else label, 'reason': reason.strip(), 'team': team}
+                    results[idx] = {
+                        'label': label if label in BUG_LABELS else label,
+                        'reason': reason.strip(),
+                        'team': team,
+                        'severity': severity
+                    }
             except Exception:
                 continue
 
