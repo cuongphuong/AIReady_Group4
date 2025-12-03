@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import ReactDOM from 'react-dom';
 
-export default function JiraImport({ onImport, onCancel }) {
+export default function JiraImport({ onClassify, onCancel, classifying = false }) {
   const [jql, setJql] = useState('project = "My Software Team" AND status = "To Do"');
   const [issues, setIssues] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -61,22 +61,21 @@ export default function JiraImport({ onImport, onCancel }) {
     }
   }
 
-  function handleConfirmImport() {
-    const bugsToImport = issues
-      .filter(issue => selectedIssues.has(issue.key))
-      .map(issue => `${issue.key}: ${issue.summary}`);
+  function handleConfirmClassify() {
+    const issuesToClassify = issues
+      .filter(issue => selectedIssues.has(issue.key));
     
-    if (bugsToImport.length > 0) {
-      onImport(bugsToImport.join('\n'));
+    if (issuesToClassify.length > 0) {
+      onClassify(issuesToClassify);
     }
   }
 
   return ReactDOM.createPortal(
     <div className="modal-overlay" onClick={onCancel}>
       <div className="modal jira-import-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-title">Import Bugs from Jira</div>
+        <div className="modal-title">Import and Classify Bugs from Jira</div>
         <div className="modal-body">
-          <p>Enter a JQL query to fetch issues from your Jira instance.</p>
+          <p>Enter a JQL query to fetch issues, then select the bugs you want to classify directly.</p>
           <div className="jira-query-form">
             <textarea
               className="jql-input"
@@ -124,10 +123,10 @@ export default function JiraImport({ onImport, onCancel }) {
           <button className="btn btn-secondary" onClick={onCancel}>Cancel</button>
           <button 
             className="btn btn-primary" 
-            onClick={handleConfirmImport}
-            disabled={selectedIssues.size === 0}
+            onClick={handleConfirmClassify}
+            disabled={selectedIssues.size === 0 || classifying}
           >
-            Import Selected ({selectedIssues.size})
+            {classifying ? 'Classifying...' : `Classify Selected (${selectedIssues.size})`}
           </button>
         </div>
       </div>

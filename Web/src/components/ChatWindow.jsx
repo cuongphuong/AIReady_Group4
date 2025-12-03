@@ -611,17 +611,45 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
     setTimeout(() => setNotice(''), 2000)
   }
 
+  const [jiraClassifying, setJiraClassifying] = useState(false);
+
   function handleImportFromJira(importedText) {
     setValue(prev => prev ? `${prev}\n${importedText}` : importedText);
     setShowJiraImport(false);
+  }
+
+  async function handleClassifyFromJira(issuesToClassify) {
+    if (!issuesToClassify || issuesToClassify.length === 0) return;
+
+    setJiraClassifying(true);
+    setShowJiraImport(false);
+
+    // Create a CSV string in memory
+    const csvHeader = "No,Nội dung bug\n";
+    const csvBody = issuesToClassify.map(issue => `"${issue.key}","${issue.summary.replace(/"/g, '""')}"`).join('\n');
+    const csvContent = csvHeader + csvBody;
+    
+    // Create a Blob and File object
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const file = new File([blob], `jira-import-${Date.now()}.csv`, { type: 'text/csv' });
+
+    // Set the file and trigger upload
+    setBulkFile(file);
+    
+    // Wait a bit for state to update, then trigger upload
+    setTimeout(() => {
+      uploadBulkFile();
+      setJiraClassifying(false);
+    }, 100);
   }
 
   return (
     <div className="chat-root">
       {showJiraImport && (
         <JiraImport 
-          onImport={handleImportFromJira}
+          onClassify={handleClassifyFromJira}
           onCancel={() => setShowJiraImport(false)}
+          classifying={jiraClassifying}
         />
       )}
       <div className="chat-toolbar">
