@@ -1,1 +1,50 @@
 .env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.venv/
+venv/
+ENV/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Uploads
+Server/uploads/
+Server/utils/uploads/
+
+# AI Models
+Server/gguf/*.gguf
+Server/Llama-3-8B-GPTQ-4bit/
+Server/Llama-3.1-8B/
+Server/Llama-*-GPTQ*/
+Server/models/*.safetensors
+Server/models/*.pth
+Server/models/*.bin
+Server/*.gguf
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Node modules
+node_modules/
+Web/node_modules/

@@ -74,6 +74,7 @@ app.add_middleware(
 
 class ClassifyRequest(BaseModel):
     text: str
+    model: str = "GPT-5"  # Default to GPT-5
 
 
 class ClassifyItem(BaseModel):
@@ -125,8 +126,16 @@ async def classify(req: ClassifyRequest):
     if not lines:
         raise HTTPException(status_code=400, detail="no bug lines found in text")
 
+    # Validate model
+    model = req.model if req.model in ["GPT-5", "Llama"] else "GPT-5"
+
     try:
-        classified = await batch_classify(lines)
+        # Use classify_bug for single line, batch_classify for multiple
+        if len(lines) == 1:
+            result = await classify_bug(lines[0], model=model)
+            classified = [result]
+        else:
+            classified = await batch_classify(lines, model=model)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"classification error: {e}")
 
@@ -149,11 +158,12 @@ async def classify(req: ClassifyRequest):
 
 
 @app.post("/upload", response_model=UploadResponse)
-async def upload_file(file: UploadFile = File(...), session_id: Optional[str] = None):
+async def upload_file(file: UploadFile = File(...), session_id: Optional[str] = None, model: str = "GPT-5"):
     """
     Upload CSV/XLSX file với columns: No, Nội dung bug
     Trả về kết quả phân loại: No, Nội dung bug, Label, Reason, Team, Severity
     Optional: session_id để liên kết với chat session
+    Optional: model - "GPT-5" hoặc "Llama" (default: "GPT-5")
     """
     global latest_results
     
@@ -220,8 +230,12 @@ async def upload_file(file: UploadFile = File(...), session_id: Optional[str] = 
         # Extract just the bug texts for classification
         bug_texts = [item['bug'] for item in bugs_with_no]
         
-        # Classify using batch
-        classified = await batch_classify(bug_texts)
+        # Validate model parameter
+        if model not in ["GPT-5", "Llama"]:
+            raise HTTPException(status_code=400, detail=f"Invalid model: {model}. Must be 'GPT-5' or 'Llama'")
+        
+        # Classify using batch with selected model
+        classified = await batch_classify(bug_texts, model=model)
         
         # Build results with No column
         results = []

@@ -1,61 +1,67 @@
 """
 Bug Classifier Service
-Phân loại bug reports sử dụng LLM với Function Calling
+Orchestrator service để phân loại bug reports
+Điều phối giữa GPT và Llama models
 """
 
 import os
-import json
-import re
 import asyncio
+import logging
 from typing import List, Optional
-from dotenv import load_dotenv
-import openai
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Import configuration từ package config
 import sys
-
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from config import BUG_LABELS, TEAM_GROUPS, LABEL_TO_TEAM, FEW_SHOT_EXAMPLES
 
-load_dotenv()
-api_key = os.getenv("OPENAI_API_KEY")
-base_url = os.getenv("OPENAI_API_BASE_URL")
-model_name = os.getenv("MODEL_NAME", "gpt-5")
+# Import model services
+try:
+    from services.gpt_service import get_gpt_service
+    GPT_AVAILABLE = True
+    logger.info("✅ GPT service available")
+except ImportError as e:
+    GPT_AVAILABLE = False
+    logger.warning(f"⚠️ GPT service not available: {e}")
 
-# Khởi tạo OpenAI client
-client = openai.OpenAI(base_url=base_url, api_key=api_key)
+try:
+    from services.llama_service import get_llama_service
+    LLAMA_AVAILABLE = True
+    logger.info("✅ Llama service available")
+    # Pre-initialize singleton để tránh load model mỗi request
+    try:
+        _llama_singleton = get_llama_service()
+        logger.info("✅ Llama singleton pre-loaded")
+    except Exception as e:
+        logger.warning(f"⚠️ Could not pre-load Llama model: {e}")
+except ImportError as e:
+    LLAMA_AVAILABLE = False
+    logger.warning(f"⚠️ Llama service not available: {e}")
+except Exception as e:
+    LLAMA_AVAILABLE = False
+    logger.error(f"❌ Error importing Llama service: {e}")
 
 
 # Helper functions
 def _label_line(label, v):
-    """Format label description với keywords"""
     kws = v.get("keywords") or []
     kw_text = f" (keywords: {', '.join(kws)})" if kws else ""
     return f"- {label}: {v.get('desc', '')}{kw_text}"
-
 
 label_descriptions = "\n".join(
     [_label_line(label, v) for label, v in BUG_LABELS.items()]
 )
 
-
-async def _call_model_with_retries(
-    call_kwargs: dict, retries: int = 3, backoff_factor: float = 0.5
-):
-    """Gọi LLM với retry logic và exponential backoff"""
-    last_exc = None
-    for attempt in range(1, retries + 1):
-        try:
-            resp = await asyncio.to_thread(
-                client.chat.completions.create, **call_kwargs
-            )
-            return resp
-        except Exception as e:
-            last_exc = e
-            wait = backoff_factor * (2 ** (attempt - 1))
-            await asyncio.sleep(wait)
-    raise last_exc
-
+# Build example text for few-shot learning
+example_text = "\n".join(
+    [
+        f"Bug report: \"{ex['description']}\"\nPhân loại: {ex['label']}"
+        for ex in FEW_SHOT_EXAMPLES
+    ]
+)
 
 def _quick_heuristic_for_text(description: str):
     """Phân loại nhanh bằng keyword matching"""
@@ -93,153 +99,85 @@ def _quick_heuristic_for_text(description: str):
     return None
 
 
-async def classify_bug(description: str):
+async def classify_bug(description: str, model: str = "GPT-5"):
     """
-    Phân loại một bug report
-    Returns: dict với keys: label, reason, team, severity
+    Phân loại bug report
+    
+    Args:
+        description: Mô tả bug
+        model: "Llama" hoặc "GPT-5"
     """
-    # Quick heuristic path
-    h = _quick_heuristic_for_text(description)
-    if h:
-        return h
-
-    # Build few-shot examples
-    example_text = "\n".join(
-        [
-            f"Bug report: \"{ex['description']}\"\nPhân loại: {ex['label']}"
-            for ex in FEW_SHOT_EXAMPLES
-        ]
-    )
-
-    # Optimized prompt (4-part structure, no output format as we use Function Calling)
-    prompt = f"""
-=== VAI TRÒ ===
-Bạn là chuyên gia QA với 10+ năm kinh nghiệm, chuyên phân tích và phân loại bug cho các hệ thống phần mềm lớn.
-
-=== NHIỆM VỤ ===
-Phân loại báo cáo bug dưới đây vào CHÍNH XÁC MỘT nhãn phù hợp nhất từ danh sách cho trước.
-Đánh giá mức độ nghiêm trọng (severity) và xác định team chịu trách nhiệm.
-
-=== NGỮ CẢNH ===
-Các nhãn phân loại có sẵn:
-{label_descriptions}
-
-Các ví dụ minh họa:
-{example_text}
-
-=== LẬP LUẬN ===
-1. Đọc kỹ mô tả bug, xác định từ khóa chính (keywords).
-2. So sánh với các nhãn có sẵn, tìm nhãn khớp nhất về mặt ngữ nghĩa.
-3. Nếu có nhiều nhãn phù hợp, ưu tiên nhãn cụ thể hơn (VD: "Backend" > "Functional").
-4. Đánh giá tác động: Critical (hệ thống sập/bảo mật) > High (chức năng chính lỗi) > Medium (trải nghiệm kém) > Low (hiển thị sai nhỏ).
-
-=== QUY TẮC ===
-- KHÔNG bịa ra nhãn mới ngoài danh sách.
-- Lý do phải ngắn gọn (< 30 từ) và bằng tiếng Việt.
-- Phải chọn đúng team dựa trên nhãn phân loại.
-
-Báo cáo bug cần phân loại:
-<<<
-{description}
->>>
-    """
-
-    # Function definition cho structured output
-    classify_function = {
-        "name": "classify_bug_report",
-        "description": "Phân loại bug report vào một trong các nhãn định sẵn",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "label": {
-                    "type": "string",
-                    "enum": list(BUG_LABELS.keys()),
-                    "description": "Nhãn phân loại bug",
-                },
-                "reason": {
-                    "type": "string",
-                    "description": "Lý do phân loại (ngắn gọn, < 30 từ, tiếng Việt)",
-                },
-                "team": {
-                    "type": "string",
-                    "enum": list(TEAM_GROUPS.keys()),
-                    "description": "Team chịu trách nhiệm",
-                },
-                "severity": {
-                    "type": "string",
-                    "enum": ["Low", "Medium", "High", "Critical"],
-                    "description": "Mức độ nghiêm trọng",
-                },
-            },
-            "required": ["label", "reason"],
-        },
-    }
-
-    call_kwargs = {
-        "model": model_name,
-        "messages": [
-            {
-                "role": "system",
-                "content": "You are a senior QA expert with 10+ years of experience. Follow the structured prompt precisely and output only valid JSON.",
-            },
-            {"role": "user", "content": prompt},
-        ],
-        "functions": [classify_function],
-        "function_call": {"name": "classify_bug_report"},
-        "max_tokens": 1500,
-    }
-    if not model_name.startswith("gpt-5"):
-        call_kwargs["temperature"] = 0.0
-
-    response = await _call_model_with_retries(call_kwargs)
-
-    # Extract function call result
-    message = response.choices[0].message
-    if message.function_call:
+    logger.info(f"\n{'='*80}")
+    logger.info(f"🔍 CLASSIFY_BUG - Model: {model}")
+    logger.info(f"📝 Input: {description[:100]}..." if len(description) > 100 else f"📝 Input: {description}")
+    
+    # Bước 1: Thử heuristic matching (nhanh nhất)
+    heuristic_result = _quick_heuristic_for_text(description)
+    if heuristic_result:
+        logger.info(f"⚡ Heuristic match: {heuristic_result}")
+        return heuristic_result
+    
+    # Bước 2: Xử lý theo model được chọn
+    if model == "Llama":
+        # Xử lý LLAMA
+        if not LLAMA_AVAILABLE:
+            logger.error(f"❌ Llama không khả dụng")
+            return {"label": "", "reason": "Llama model not available", "team": None, "severity": None}
+        
         try:
-            args = json.loads(message.function_call.arguments)
-            label = args.get("label")
-            reason = args.get("reason") or ""
-            team = args.get("team") or LABEL_TO_TEAM.get(label)
-            severity = args.get("severity")
-
-            return {
-                "label": label,
-                "reason": reason.strip(),
-                "team": team,
-                "severity": severity,
-            }
+            logger.info("🦙 Đang xử lý bằng Llama...")
+            llama_service = get_llama_service()
+            result = await asyncio.to_thread(
+                llama_service.classify_bug,
+                description,
+                list(BUG_LABELS.keys()),
+                FEW_SHOT_EXAMPLES
+            )
+            # Map team
+            if not result.get('team') and result.get('label'):
+                result['team'] = LABEL_TO_TEAM.get(result['label'])
+            logger.info(f"✅ Llama result: {result}")
+            return result
         except Exception as e:
-            print(f"Function call parse error: {e}")
-
-    # Fallback: parse content as JSON
-    raw = message.content
-    if raw:
+            logger.error(f"❌ Llama lỗi: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return {"label": "", "reason": f"Llama error: {str(e)}", "team": None, "severity": None}
+    
+    elif model == "GPT-5":
+        # Xử lý GPT
+        if not GPT_AVAILABLE:
+            logger.error("❌ GPT không khả dụng")
+            return {"label": "", "reason": "GPT model not available", "team": None, "severity": None}
+        
         try:
-            parsed = json.loads(raw.strip())
-            label = parsed.get("label")
-            reason = parsed.get("reason") or ""
-            team = parsed.get("team") or LABEL_TO_TEAM.get(label)
-            if label and label in BUG_LABELS:
-                return {"label": label, "reason": reason.strip(), "team": team}
-        except Exception:
-            pass
+            logger.info("🤖 Đang xử lý bằng GPT...")
+            gpt_service = get_gpt_service()
+            result = await gpt_service.classify_bug(
+                description=description,
+                labels=list(BUG_LABELS.keys()),
+                label_descriptions=label_descriptions,
+                example_text=example_text,
+                team_groups=list(TEAM_GROUPS.keys())
+            )
+            # Map team
+            if not result.get('team') and result.get('label'):
+                result['team'] = LABEL_TO_TEAM.get(result['label'])
+            logger.info(f"✅ GPT result: {result}")
+            return result
+        except Exception as e:
+            logger.error(f"❌ GPT lỗi: {e}")
+            return {"label": "", "reason": f"GPT error: {str(e)}", "team": None, "severity": None}
+    
+    else:
+        # Model không hỗ trợ
+        logger.error(f"❌ Model '{model}' không được hỗ trợ")
+        return {"label": "", "reason": f"Unsupported model: {model}", "team": None, "severity": None}
 
-        # Final fallback: regex search
-        m = re.search(
-            r"\b({})\b".format("|".join(re.escape(k) for k in BUG_LABELS.keys())), raw
-        )
-        if m:
-            return {"label": m.group(1), "reason": raw}
 
-    return {"label": "", "reason": "classification_failed", "team": None}
-
-
-async def batch_classify(descriptions: List[str]):
-    """
-    Phân loại nhiều bug reports cùng lúc
-    Returns: list of dicts với keys: label, reason, team, severity
-    """
+async def batch_classify(descriptions: List[str], model: str = "GPT-5"):
+    logger.info(f"\n{'='*80}")
+    logger.info(f"📦 BATCH_CLASSIFY - Model: {model}, Count: {len(descriptions)}")
     results: List[Optional[dict]] = [None] * len(descriptions)
 
     # Heuristic pass
@@ -250,170 +188,117 @@ async def batch_classify(descriptions: List[str]):
             results[i] = h
         else:
             remaining_indexes.append(i)
+    
+    logger.info(f"⚡ Heuristic matched: {len(descriptions) - len(remaining_indexes)}/{len(descriptions)}")
+    logger.info(f"🔄 Remaining for model: {len(remaining_indexes)}")
 
     if not remaining_indexes:
         return results
-
-    # Build batch prompt
-    input_list_text = "\n".join(
-        [f"[{idx}]: {descriptions[idx]}" for idx in remaining_indexes]
-    )
-    example_text = "\n".join(
-        [
-            f"Bug report: \"{ex['description']}\"\nPhân loại: {ex['label']}"
-            for ex in FEW_SHOT_EXAMPLES
-        ]
-    )
-
-    batch_prompt = f"""
-=== VAI TRÒ ===
-Bạn là chuyên gia QA với 10+ năm kinh nghiệm, chuyên phân tích và phân loại bug hàng loạt với độ chính xác cao.
-
-=== NHIỆM VỤ ===
-Phân loại TẤT CẢ các báo cáo bug trong danh sách dưới đây.
-Mỗi bug phải được gán ĐÚNG MỘT nhãn, kèm lý do, team, và severity.
-
-=== NGỮ CẢNH ===
-Các nhãn phân loại có sẵn:
-{label_descriptions}
-
-Các ví dụ minh họa:
-{example_text}
-
-=== LẬP LUẬN ===
-Với mỗi bug:
-1. Xác định từ khóa chính (keywords) trong mô tả.
-2. So khớp với danh sách nhãn, chọn nhãn phù hợp nhất.
-3. Ưu tiên nhãn cụ thể (VD: "Database" > "Backend" nếu liên quan query).
-4. Đánh giá severity dựa trên tác động thực tế.
-
-=== QUY TẮC ===
-- PHẢI phân loại hết tất cả các bug (bao gồm cả index trong danh sách).
-- KHÔNG bỏ sót bug nào.
-- KHÔNG bịa ra nhãn mới ngoài danh sách.
-- Lý do phải ngắn gọn (< 30 từ) và bằng tiếng Việt.
-
-Danh sách báo cáo cần phân loại (format [index]: text):
-{input_list_text}
-    """
-
-    batch_classify_function = {
-        "name": "batch_classify_bugs",
-        "description": "Phân loại nhiều bug reports cùng lúc",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "classifications": {
-                    "type": "array",
-                    "description": "Danh sách kết quả phân loại",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "index": {"type": "integer", "description": "Chỉ số bug"},
-                            "label": {
-                                "type": "string",
-                                "enum": list(BUG_LABELS.keys()),
-                            },
-                            "reason": {
-                                "type": "string",
-                                "description": "Lý do (< 30 từ)",
-                            },
-                            "team": {
-                                "type": "string",
-                                "enum": list(TEAM_GROUPS.keys()),
-                            },
-                            "severity": {
-                                "type": "string",
-                                "enum": ["Low", "Medium", "High", "Critical"],
-                            },
-                        },
-                        "required": ["index", "label", "reason"],
-                    },
-                }
-            },
-            "required": ["classifications"],
-        },
-    }
-
-    call_kwargs = {
-        "model": model_name,
-        "messages": [
-            {
-                "role": "system",
-                "content": "You are a senior QA expert. Follow the structured prompt. Classify ALL bugs without omission. Output only valid JSON array.",
-            },
-            {"role": "user", "content": batch_prompt},
-        ],
-        "functions": [batch_classify_function],
-        "function_call": {"name": "batch_classify_bugs"},
-        "max_tokens": 4000,
-    }
-    if not model_name.startswith("gpt-5"):
-        call_kwargs["temperature"] = 0.0
-
-    response = await _call_model_with_retries(
-        call_kwargs, retries=4, backoff_factor=0.6
-    )
-
-    # Extract function call result
-    message = response.choices[0].message
-    parsed_array = None
-
-    if message.function_call:
+    
+    # Xử lý theo model được chọn
+    if model == "Llama":
+        # Xử lý LLAMA batch
+        if not LLAMA_AVAILABLE:
+            logger.error(f"❌ Llama không khả dụng")
+            for idx in remaining_indexes:
+                results[idx] = {"label": "", "reason": "Llama model not available", "team": None, "severity": None}
+            return results
+        
+        logger.info("🦙 Đang xử lý batch bằng Llama...")
+        llama_service = get_llama_service()
+        
+        # Get descriptions for remaining bugs
+        remaining_descriptions = [descriptions[idx] for idx in remaining_indexes]
+        
+        # Try batch classification first (more efficient)
         try:
-            args = json.loads(message.function_call.arguments)
-            parsed_array = args.get("classifications", [])
+            batch_results = await asyncio.to_thread(
+                llama_service.batch_classify_bugs,
+                remaining_descriptions,
+                list(BUG_LABELS.keys()),
+                FEW_SHOT_EXAMPLES
+            )
+            
+            # Map results back
+            for i, idx in enumerate(remaining_indexes):
+                if i < len(batch_results):
+                    result = batch_results[i]
+                    # Add team mapping
+                    if not result.get('team') and result.get('label'):
+                        result['team'] = LABEL_TO_TEAM.get(result['label'])
+                    results[idx] = result
+            
+            logger.info(f"✅ Llama batch classification complete")
         except Exception as e:
-            print(f"Function call parse error: {e}")
-
-    # Fallback: parse content as JSON array
-    if not parsed_array and message.content:
-        raw = message.content.strip()
-        try:
-            parsed_array = json.loads(raw)
-            if not isinstance(parsed_array, list):
-                parsed_array = None
-        except Exception:
-            m = re.search(r"(\[\s*\{[\s\S]*\}\s*\])", raw)
-            if m:
+            logger.error(f"❌ Llama batch error: {e}, falling back to individual classification")
+            # Fallback: classify individually
+            for idx in remaining_indexes:
                 try:
-                    parsed_array = json.loads(m.group(1))
-                except Exception:
-                    parsed_array = None
-
-    # Map results
-    if parsed_array:
-        for item in parsed_array:
-            try:
-                idx = int(item.get("index"))
-                label = item.get("label")
-                reason = item.get("reason") or ""
-                team = item.get("team") or (
-                    LABEL_TO_TEAM.get(label) if label in LABEL_TO_TEAM else None
-                )
-                severity = item.get("severity")
-                if 0 <= idx < len(results):
-                    results[idx] = {
-                        "label": label if label in BUG_LABELS else label,
-                        "reason": reason.strip(),
-                        "team": team,
-                        "severity": severity,
-                    }
-            except Exception:
-                continue
+                    result = await classify_bug(descriptions[idx], model="Llama")
+                    results[idx] = result
+                except Exception as e2:
+                    logger.error(f"❌ Llama lỗi bug {idx}: {e2}")
+                    results[idx] = {"label": "", "reason": f"Llama error: {str(e2)}", "team": None, "severity": None}
+        
+        logger.info(f"✅ Batch classification complete: {len(results)} results")
+        return results
+    
+    elif model == "GPT-5":
+        # Xử lý GPT batch
+        if not GPT_AVAILABLE:
+            logger.error("❌ GPT không khả dụng")
+            for idx in remaining_indexes:
+                results[idx] = {"label": "", "reason": "GPT model not available", "team": None, "severity": None}
+            return results
+        
+        logger.info("🤖 Đang xử lý batch bằng GPT...")
+        gpt_service = get_gpt_service()
+        
+        # Lấy descriptions và indexes còn lại
+        remaining_descriptions = [descriptions[idx] for idx in remaining_indexes]
+        
+        # Gọi GPT batch API
+        batch_results = await gpt_service.batch_classify(
+            descriptions=remaining_descriptions,
+            indexes=remaining_indexes,
+            labels=list(BUG_LABELS.keys()),
+            label_descriptions=label_descriptions,
+            example_text=example_text,
+            team_groups=list(TEAM_GROUPS.keys())
+        )
+        
+        # Map kết quả về
+        for idx, result in batch_results.items():
+            if 0 <= idx < len(results):
+                if not result.get('team') and result.get('label'):
+                    result['team'] = LABEL_TO_TEAM.get(result['label'])
+                results[idx] = result
+    
+    else:
+        # Model không hỗ trợ
+        logger.error(f"❌ Model '{model}' không được hỗ trợ")
+        for idx in remaining_indexes:
+            results[idx] = {"label": "", "reason": f"Unsupported model: {model}", "team": None, "severity": None}
+        return results
 
     # Fallback individual classification for None entries
+    none_count = sum(1 for r in results if r is None)
+    if none_count > 0:
+        logger.info(f"🔄 Fallback individual classification for {none_count} bugs")
+    
     for i in range(len(results)):
         if results[i] is None:
             try:
-                results[i] = await classify_bug(descriptions[i])
-            except Exception:
+                results[i] = await classify_bug(descriptions[i], model=model)
+            except Exception as e:
+                logger.error(f"❌ Failed to classify bug {i}: {e}")
                 results[i] = {
                     "label": "",
                     "reason": "classification_failed",
                     "team": None,
                 }
-
+    
+    logger.info(f"✅ Batch classification complete: {len(results)} results")
     return results
 
 

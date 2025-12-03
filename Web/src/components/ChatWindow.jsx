@@ -204,7 +204,7 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
         const resp = await fetch('http://localhost:8000/classify', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text })
+          body: JSON.stringify({ text, model: selectedModel })
         })
         if (!resp.ok) {
           const errText = await resp.text()
@@ -343,10 +343,10 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
       const nextUser = [...messages, userMsg, botTyping]
       setMessages(nextUser)
 
-      // Gọi API upload với session_id
+      // Gọi API upload với session_id và model
       const uploadUrl = chat?.sessionId 
-        ? `http://localhost:8000/upload?session_id=${chat.sessionId}`
-        : 'http://localhost:8000/upload'
+        ? `http://localhost:8000/upload?session_id=${chat.sessionId}&model=${selectedModel}`
+        : `http://localhost:8000/upload?model=${selectedModel}`
       const response = await fetch(uploadUrl, {
         method: 'POST',
         body: formData

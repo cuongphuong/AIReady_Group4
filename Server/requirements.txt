@@ -7,3 +7,9 @@ pandas
 openpyxl
 python-multipart
 requests
+transformers
+accelerate
+torch
+psutil
+auto-gptq
+optimum
