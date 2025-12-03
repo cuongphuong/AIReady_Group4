@@ -30,8 +30,12 @@
   --primary-light: rgba(11,132,255,0.12);
   --glass: rgba(2,6,23,0.03);
   --overlay: rgba(2,6,23,0.06);
+  --danger: #dc3545;
+  --danger-light: #f8d7da;
+  --surface-hover: #dee2e6;
+  --border-light: #e9ecef;
 }
-.theme-dark{ }
+
 body {
   margin: 0;
   font-family: 'Plus Jakarta Sans', Inter, system-ui, Arial, sans-serif;
@@ -362,3 +366,106 @@ body.modal-open .conversation-item {
 
 /* File preview message (rendered inside bubble) */
 .file-preview{font-family:monospace;font-size:12px;white-space:pre-wrap;margin-top:8px;background:var(--surface);padding:8px;border-radius:6px}
+
+/* Jira Import Modal */
+.jira-import-modal {
+  width: 90%;
+  max-width: 720px;
+}
+
+.jira-query-form {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.jql-input {
+  flex-grow: 1;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background-color: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+  resize: vertical;
+}
+
+.jira-error {
+  color: var(--danger);
+  background-color: var(--danger-light);
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-bottom: 16px;
+  font-size: 13px;
+}
+
+.jira-results {
+  margin-top: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.jira-results-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background-color: var(--surface);
+  font-size: 13px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+.jira-issue-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.jira-issue-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  font-size: 14px;
+  border-bottom: 1px solid var(--border-light);
+  transition: background-color 0.15s ease;
+}
+
+.jira-issue-item:last-child {
+  border-bottom: none;
+}
+
+.jira-issue-item:hover {
+  background-color: var(--surface-hover);
+}
+
+.jira-issue-item input[type="checkbox"] {
+  flex-shrink: 0;
+}
+
+.issue-key {
+  font-weight: 600;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.issue-summary {
+  flex-grow: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.issue-status {
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background-color: var(--surface);
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}

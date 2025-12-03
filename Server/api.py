@@ -50,6 +50,17 @@ try:
 except ImportError:
     pd = None
 
+# Import Jira fetcher
+try:
+    from fetch_jira import fetch_jira_issues
+except ImportError:
+    try:
+        from .fetch_jira import fetch_jira_issues
+    except ImportError as e:
+        # This is not a critical error, so we can just print a warning
+        print(f"Warning: Jira fetcher not available: {e}")
+        fetch_jira_issues = None
+
 app = FastAPI(title="BugClassifier API", version="0.1")
 
 # Initialize database and upload directory on startup
@@ -112,6 +123,9 @@ class AddMessageRequest(BaseModel):
     content: str
     file_upload_id: Optional[int] = None
     model: Optional[str] = None
+
+class JiraRequest(BaseModel):
+    jql: str
 
 @app.get("/health")
 async def health():
@@ -535,6 +549,26 @@ async def get_classification_by_upload_id(file_upload_id: int):
         return {"file_upload_id": file_upload_id, "results": results}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/jira/fetch")
+async def fetch_jira(req: JiraRequest):
+    """
+    Fetch issues from Jira based on a JQL query.
+    """
+    if not fetch_jira_issues:
+        raise HTTPException(status_code=501, detail="Jira integration is not configured on the server.")
+
+    if not req.jql or not req.jql.strip():
+        raise HTTPException(status_code=400, detail="JQL query is required.")
+
+    try:
+        issues = fetch_jira_issues(req.jql)
+        if "error" in issues:
+            raise HTTPException(status_code=500, detail=issues.get("details", issues["error"]))
+        return {"issues": issues}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
 
 # uvicorn entrypoint hint

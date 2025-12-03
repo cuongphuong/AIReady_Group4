@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react'
 import Message from './Message'
+import JiraImport from './JiraImport'
+
 // Note: papaparse and xlsx are optional dependencies. We dynamically import them
 // when handling files so the dev server does not fail if they are not installed.
 
@@ -8,6 +10,7 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
   const [selectedModel, setSelectedModel] = useState('GPT-5')
   const [showModelMenu, setShowModelMenu] = useState(false)
   const modelMenuRef = useRef(null)
+  const [showJiraImport, setShowJiraImport] = useState(false);
   
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -608,9 +611,23 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
     setTimeout(() => setNotice(''), 2000)
   }
 
+  function handleImportFromJira(importedText) {
+    setValue(prev => prev ? `${prev}\n${importedText}` : importedText);
+    setShowJiraImport(false);
+  }
+
   return (
     <div className="chat-root">
+      {showJiraImport && (
+        <JiraImport 
+          onImport={handleImportFromJira}
+          onCancel={() => setShowJiraImport(false)}
+        />
+      )}
       <div className="chat-toolbar">
+        <button className="export-btn" onClick={() => setShowJiraImport(true)} title="Import bugs from Jira">
+          Import from Jira
+        </button>
         <button className="export-btn" onClick={exportClassifiedBugs} title="Tải xuống bug đã phân loại">
           Tải bug đã phân loại
         </button>
