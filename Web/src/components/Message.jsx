@@ -10,7 +10,7 @@ function Avatar({ role }) {
   )
 }
 
-export default function Message({ role = 'assistant', text = '', time = '', animate = false, typing = false, onDownload = null, hasDownloadButton = false }) {
+export default function Message({ role = 'assistant', text = '', time = '', animate = false, typing = false, onDownload = null, hasDownloadButton = false, model = null }) {
   const isUser = role === 'user'
   const bubbleClass = [isUser ? 'bubble-user' : 'bubble-bot']
   if (animate) bubbleClass.push('is-entering')
@@ -20,6 +20,25 @@ export default function Message({ role = 'assistant', text = '', time = '', anim
     <div className={`message-row ${isUser ? 'user' : 'assistant'}`}>
       {!isUser && <Avatar role={role} />}
       <div className={`bubble ${bubbleClass.join(' ')}`}>
+        {!isUser && model && (
+          <div style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '4px',
+            padding: '2px 8px',
+            backgroundColor: model === 'GPT-5' ? 'rgba(88, 101, 242, 0.15)' : 'rgba(250, 166, 26, 0.15)',
+            border: `1px solid ${model === 'GPT-5' ? 'rgba(88, 101, 242, 0.3)' : 'rgba(250, 166, 26, 0.3)'}`,
+            borderRadius: '6px',
+            fontSize: '10px',
+            fontWeight: '700',
+            color: model === 'GPT-5' ? '#5865F2' : '#FAA61A',
+            letterSpacing: '0.3px',
+            marginBottom: '6px',
+            textTransform: 'uppercase'
+          }}>
+            {model === 'GPT-5' ? '✨' : '⚡'} {model}
+          </div>
+        )}
         <div className="bubble-text">
           {typing ? (
             <span className="typing-dots"><span></span><span></span><span></span></span>

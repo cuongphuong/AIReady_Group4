@@ -31,6 +31,7 @@ def init_db():
             role TEXT NOT NULL,
             content TEXT NOT NULL,
             file_upload_id INTEGER,
+            model TEXT,
             timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (session_id) REFERENCES chat_sessions(session_id) ON DELETE CASCADE,
             FOREIGN KEY (file_upload_id) REFERENCES file_uploads(id) ON DELETE SET NULL
@@ -139,7 +140,7 @@ def get_all_chat_sessions() -> List[Dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
-def add_chat_message(session_id: str, role: str, content: str, file_upload_id: Optional[int] = None) -> int:
+def add_chat_message(session_id: str, role: str, content: str, file_upload_id: Optional[int] = None, model: Optional[str] = None) -> int:
     """Add a message to chat session, returns message ID"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -152,8 +153,8 @@ def add_chat_message(session_id: str, role: str, content: str, file_upload_id: O
     
     # Insert message
     cursor.execute(
-        "INSERT INTO chat_messages (session_id, role, content, file_upload_id) VALUES (?, ?, ?, ?)",
-        (session_id, role, content, file_upload_id)
+        "INSERT INTO chat_messages (session_id, role, content, file_upload_id, model) VALUES (?, ?, ?, ?, ?)",
+        (session_id, role, content, file_upload_id, model)
     )
     message_id = cursor.lastrowid
     conn.commit()

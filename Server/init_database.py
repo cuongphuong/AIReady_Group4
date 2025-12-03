@@ -22,19 +22,6 @@ def main():
     success = create_chat_session(session_id, "Chat demo")
     print(f"Success: {success}\n")
     
-    # Test: Add messages
-    print("Adding test messages...")
-    add_chat_message(session_id, "user", "Nút bị lệch trên trang chủ")
-    add_chat_message(session_id, "assistant", "1. UI — Nút bị lệch so với thiết kế, ảnh hưởng đến giao diện trang chủ.\nNút bị lệch trên trang chủ")
-    print("Messages added\n")
-    
-    # Test: Get messages
-    print("Retrieving messages...")
-    messages = get_chat_messages(session_id)
-    for msg in messages:
-        print(f"  [{msg['role']}]: {msg['content']}")
-    print()
-    
     # Show statistics
     print("=== Database Statistics ===")
     stats = get_statistics()

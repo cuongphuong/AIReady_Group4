@@ -111,6 +111,7 @@ class AddMessageRequest(BaseModel):
     role: str
     content: str
     file_upload_id: Optional[int] = None
+    model: Optional[str] = None
 
 @app.get("/health")
 async def health():
@@ -476,7 +477,7 @@ async def add_message(session_id: str, request: AddMessageRequest):
     if request.role not in ["user", "assistant"]:
         raise HTTPException(status_code=400, detail="role must be 'user' or 'assistant'")
     
-    message_id = add_chat_message(session_id, request.role, request.content, request.file_upload_id)
+    message_id = add_chat_message(session_id, request.role, request.content, request.file_upload_id, request.model)
     return {"message_id": message_id, "session_id": session_id, "success": True}
 
 

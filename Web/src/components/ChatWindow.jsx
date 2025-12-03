@@ -26,7 +26,7 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
   }, [showModelMenu])
   
   // Function để lưu message vào database
-  async function saveMessageToDB(role, content, fileUploadId = null) {
+  async function saveMessageToDB(role, content, fileUploadId = null, model = null) {
     if (!chat?.sessionId) {
       console.warn('Cannot save message: no sessionId', { chat })
       return
@@ -36,7 +36,8 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
       sessionId: chat.sessionId, 
       role, 
       content: content.substring(0, 50),
-      fileUploadId 
+      fileUploadId,
+      model
     })
     
     try {
@@ -46,7 +47,8 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
         body: JSON.stringify({ 
           role, 
           content,
-          file_upload_id: fileUploadId
+          file_upload_id: fileUploadId,
+          model: model
         })
       })
       
@@ -151,7 +153,7 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
             }
           }
           
-          return {
+          const messageObj = {
             id: msg.id,
             role: msg.role,
             text: msg.content,
@@ -161,10 +163,19 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
             }),
             // Show download button nếu message có file_upload_id
             hasDownloadButton: hasFileUpload,
-            file_upload_id: msg.file_upload_id
+            file_upload_id: msg.file_upload_id,
+            model: msg.model
           }
+          
+          // Debug log
+          if (msg.role === 'assistant' && msg.model) {
+            console.log('Loaded assistant message with model:', msg.model, 'ID:', msg.id)
+          }
+          
+          return messageObj
         }))
         
+        console.log('Total loaded messages:', loadedMessages.length)
         setMessages(loadedMessages)
         
         // Update chat object để không phải load lại
@@ -194,7 +205,7 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
     // Lưu user message vào database
     saveMessageToDB('user', text)
     // Append a placeholder assistant "typing" message so user sees immediate feedback
-    const placeholder = { id: Date.now() + 9999, role: 'assistant', text: 'Đang phân loại...', time: '', animate: true, typing: true }
+    const placeholder = { id: Date.now() + 9999, role: 'assistant', text: 'Đang phân loại...', time: '', animate: true, typing: true, model: selectedModel }
     pendingRef.current = placeholder.id
     const nextWithPlaceholder = [...next, placeholder]
     setMessages(nextWithPlaceholder)
@@ -233,11 +244,12 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
           role: 'assistant',
           text: botText,
           time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          animate: true
+          animate: true,
+          model: selectedModel
         }
         
         // Lưu assistant message vào database
-        saveMessageToDB('assistant', botText)
+        saveMessageToDB('assistant', botText, null, selectedModel)
         
         // replace placeholder message if present, otherwise append
         setMessages((prev) => {
@@ -387,11 +399,12 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
         text: `✅ Đã phân loại ${data.classified_rows}/${data.total_rows} bugs.\n${labelSummary}`,
         time,
         animate: true,
-        hasDownloadButton: true // Flag for download button
+        hasDownloadButton: true, // Flag for download button
+        model: selectedModel
       }
       
       // Lưu classification result vào database với file_upload_id
-      saveMessageToDB('assistant', `✅ Đã phân loại ${data.classified_rows}/${data.total_rows} bugs.\n${labelSummary}`, fileUploadId)
+      saveMessageToDB('assistant', `✅ Đã phân loại ${data.classified_rows}/${data.total_rows} bugs.\n${labelSummary}`, fileUploadId, selectedModel)
       
       // Xóa bubble bot typing cuối cùng, thêm bot kết quả
       setMessages((prev) => {
@@ -615,6 +628,7 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
             typing={m.typing}
             hasDownloadButton={m.hasDownloadButton}
             onDownload={m.hasDownloadButton ? () => downloadExcel(m) : null}
+            model={m.model}
           />
         ))}
       </div>
@@ -701,7 +715,7 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
                   whiteSpace: 'nowrap'
                 }}
               >
-                <span>Smart ({selectedModel})</span>
+                <span>{selectedModel === "GPT-5" ? "Smart" : "Private"} ({selectedModel})</span>
                 <svg 
                   width="10" 
                   height="10" 

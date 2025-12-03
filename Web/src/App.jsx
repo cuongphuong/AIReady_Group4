@@ -83,7 +83,8 @@ export default function App() {
                     minute: '2-digit'
                   }),
                   file_upload_id: msg.file_upload_id,
-                  hasDownloadButton: msg.file_upload_id !== null && msg.file_upload_id !== undefined
+                  hasDownloadButton: msg.file_upload_id !== null && msg.file_upload_id !== undefined,
+                  model: msg.model
                 }))
               }
             } catch (err) {
