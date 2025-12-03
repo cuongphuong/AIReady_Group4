@@ -11,13 +11,13 @@ from typing import Optional, List
 
 # Import database and file storage
 try:
-    from database import (
+    from models.database import (
         init_db, create_chat_session, add_chat_message, get_chat_messages,
         save_file_upload, save_classification_results, get_file_uploads,
         get_all_chat_sessions, delete_chat_session, update_chat_session_title,
         get_statistics
     )
-    from file_storage import save_uploaded_file, get_file_size, init_upload_directory
+    from utils.file_storage import save_uploaded_file, get_file_size, init_upload_directory
     DATABASE_ENABLED = True
 except ImportError as e:
     print(f"Warning: Database not available: {e}")
@@ -36,13 +36,13 @@ load_dotenv()
 # Import classifier (should be import-safe now)
 try:
     # batch_classify is the new async batch classifier; keep classify_bug for single-item fallback
-    from bug_classifier import batch_classify, classify_bug
+    from services.classifier import batch_classify, classify_bug
 except ImportError:
     # fallback to relative import if running as package
     try:
-        from .bug_classifier import batch_classify, classify_bug
+        from .services.classifier import batch_classify, classify_bug
     except ImportError as e:
-        raise RuntimeError(f"Failed to import bug_classifier: {e}")
+        raise RuntimeError(f"Failed to import classifier: {e}")
 
 # Try to import pandas and openpyxl for Excel support
 try:
@@ -503,7 +503,7 @@ async def get_classification_by_upload_id(file_upload_id: int):
         raise HTTPException(status_code=503, detail="database not available")
     
     try:
-        from database import get_classification_results
+        from models.database import get_classification_results
         db_results = get_classification_results(file_upload_id)
         
         # Map DB results to API model

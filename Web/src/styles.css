@@ -5,11 +5,14 @@
   --accent-2: #2b6ef6;
   --muted: rgba(255,255,255,0.70); /* body / primary text (dark theme) */
   --text: #e6eef8; /* on-surface text color (dark theme) */
+  --text-secondary: rgba(255,255,255,0.50); /* secondary text */
   --border: rgba(255,255,255,0.06); /* subtle adaptive border */
   --surface: rgba(255,255,255,0.02); /* surface tints */
   --user: #0b84ff;
+  --primary: #0b84ff;
+  --primary-light: rgba(11,132,255,0.15);
   --glass: rgba(255,255,255,0.03);
-    --overlay: rgba(20,24,31,0.65);
+  --overlay: rgba(20,24,31,0.65);
 }
 /* Light theme overrides */
 .theme-light {
@@ -19,9 +22,12 @@
   --accent-2: #2b6ef6;
   --muted: rgba(12,20,34,0.72); /* primary text (light theme) */
   --text: #0c1422; /* on-surface text color (light theme) */
+  --text-secondary: rgba(12,20,34,0.50); /* secondary text */
   --border: rgba(12,20,34,0.08);
   --surface: rgba(255,255,255,0.96); /* opaque light surface for dialogs/panels */
   --user: #0b84ff;
+  --primary: #0b84ff;
+  --primary-light: rgba(11,132,255,0.12);
   --glass: rgba(2,6,23,0.03);
   --overlay: rgba(2,6,23,0.06);
 }
@@ -129,6 +135,12 @@ html, body, #root {
 @keyframes popIn {
   from { opacity: 0; transform: translateY(8px) scale(0.995); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* slideDown animation for dropdown menu */
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 /* apply pop-in only when element has is-entering class */

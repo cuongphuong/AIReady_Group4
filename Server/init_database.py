@@ -1,8 +1,8 @@
 """
 Script to initialize database and test basic operations
 """
-from database import init_db, create_chat_session, add_chat_message, get_chat_messages, get_statistics
-from file_storage import init_upload_directory
+from models.database import init_db, create_chat_session, add_chat_message, get_chat_messages, get_statistics
+from utils.file_storage import init_upload_directory
 import uuid
 
 def main():

@@ -1,0 +1,15 @@
+1. Truy cập: https://huggingface.co/meta-llama/Llama-3.1-8B
+Điền thông tin và xin cấp quyền
+
+2. https://huggingface.co/settings/tokens
+Get TOKEN access (read thôi là được)
+
+3. Login HF trên bash với TOKEN đã gen ở 2.
+huggingface-cli login
+
+4. Clone mô hình llama về qua GIT
+git lfs install
+git clone https://huggingface.co/meta-llama/Llama-3.1-8B
+
+5. Chạy bằng transformers 
+(Xem source code đã đối ứng)

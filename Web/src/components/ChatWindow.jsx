@@ -5,6 +5,25 @@ import Message from './Message'
 
 export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
   const [messages, setMessages] = useState(chat?.messages ?? [])
+  const [selectedModel, setSelectedModel] = useState('GPT-5')
+  const [showModelMenu, setShowModelMenu] = useState(false)
+  const modelMenuRef = useRef(null)
+  
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (modelMenuRef.current && !modelMenuRef.current.contains(event.target)) {
+        setShowModelMenu(false)
+      }
+    }
+    
+    if (showModelMenu) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside)
+      }
+    }
+  }, [showModelMenu])
   
   // Function để lưu message vào database
   async function saveMessageToDB(role, content, fileUploadId = null) {
@@ -611,10 +630,6 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
         />
 
         <div className="composer-pill" aria-hidden={!chat}>
-          <button className="pill-add" onClick={triggerUpload} title="Add file" aria-label="Add">
-            <span className="plus">＋</span>
-          </button>
-
           <textarea
             ref={composeRef}
             className="composer-input"
@@ -643,6 +658,203 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M22 2L11 13" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/><path d="M22 2L15 22l-4-9-9-4 20-7z" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/></svg>
               )}
             </button>
+
+            {/* Button + */}
+            <button 
+              onClick={triggerUpload} 
+              disabled={!chat}
+              title="Upload file"
+              className="icon-btn"
+              style={{
+                width: '32px',
+                height: '32px',
+                minWidth: '32px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: 0,
+                marginLeft: '4px'
+              }}
+            >
+              <span style={{ fontSize: '18px', lineHeight: 1 }}>＋</span>
+            </button>
+
+            {/* Model Selector */}
+            <div ref={modelMenuRef} style={{ position: 'relative', flexShrink: 0, marginLeft: '8px' }}>
+              <button
+                onClick={() => setShowModelMenu(!showModelMenu)}
+                disabled={!chat}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  padding: '6px 10px',
+                  height: '32px',
+                  backgroundColor: 'transparent',
+                  border: 'none',
+                  color: 'var(--text)',
+                  fontSize: '13px',
+                  fontWeight: '600',
+                  cursor: chat ? 'pointer' : 'not-allowed',
+                  opacity: chat ? 1 : 0.5,
+                  transition: 'all 0.2s ease',
+                  whiteSpace: 'nowrap'
+                }}
+              >
+                <span>Smart ({selectedModel})</span>
+                <svg 
+                  width="10" 
+                  height="10" 
+                  viewBox="0 0 24 24" 
+                  fill="none" 
+                  style={{ 
+                    transform: showModelMenu ? 'rotate(180deg)' : 'rotate(0deg)',
+                    transition: 'transform 0.2s ease',
+                    flexShrink: 0
+                  }}
+                >
+                  <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </button>
+
+            {/* Dropdown Menu */}
+            {showModelMenu && chat && (
+              <div
+                style={{
+                  position: 'absolute',
+                  bottom: 'calc(100% + 8px)',
+                  right: 0,
+                  minWidth: '240px',
+                  backgroundColor: 'var(--panel)',
+                  backdropFilter: 'blur(20px)',
+                  border: '1px solid var(--border)',
+                  borderRadius: '12px',
+                  boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
+                  zIndex: 1000,
+                  overflow: 'hidden',
+                  animation: 'slideDown 0.15s ease'
+                }}
+              >
+                {/* GPT-5 Option */}
+                <div
+                  onClick={() => {
+                    setSelectedModel('GPT-5')
+                    setShowModelMenu(false)
+                  }}
+                  style={{
+                    padding: '12px 16px',
+                    cursor: 'pointer',
+                    backgroundColor: selectedModel === 'GPT-5' ? 'var(--primary-light)' : 'transparent',
+                    transition: 'background-color 0.15s ease'
+                  }}
+                  onMouseEnter={(e) => {
+                    if (selectedModel !== 'GPT-5') {
+                      e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.05)'
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (selectedModel !== 'GPT-5') {
+                      e.currentTarget.style.backgroundColor = 'transparent'
+                    }
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div style={{ 
+                      fontSize: '20px',
+                      width: '28px',
+                      height: '28px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}>
+                      ✨
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ 
+                        fontWeight: '600', 
+                        fontSize: '13px',
+                        marginBottom: '2px',
+                        color: 'var(--text)'
+                      }}>
+                        GPT-5
+                      </div>
+                      <div style={{ 
+                        fontSize: '11px', 
+                        color: 'var(--text-secondary)',
+                        lineHeight: '1.3'
+                      }}>
+                        Model AI online - Độ chính xác cao
+                      </div>
+                    </div>
+                    {selectedModel === 'GPT-5' && (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                        <path d="M20 6L9 17l-5-5" stroke="var(--primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    )}
+                  </div>
+                </div>
+
+                {/* Llama Option */}
+                <div
+                  onClick={() => {
+                    setSelectedModel('Llama')
+                    setShowModelMenu(false)
+                  }}
+                  style={{
+                    padding: '12px 16px',
+                    cursor: 'pointer',
+                    backgroundColor: selectedModel === 'Llama' ? 'var(--primary-light)' : 'transparent',
+                    transition: 'background-color 0.15s ease'
+                  }}
+                  onMouseEnter={(e) => {
+                    if (selectedModel !== 'Llama') {
+                      e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.05)'
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (selectedModel !== 'Llama') {
+                      e.currentTarget.style.backgroundColor = 'transparent'
+                    }
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div style={{ 
+                      fontSize: '20px',
+                      width: '28px',
+                      height: '28px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}>
+                      ⚡
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ 
+                        fontWeight: '600', 
+                        fontSize: '13px',
+                        marginBottom: '2px',
+                        color: 'var(--text)'
+                      }}>
+                        Llama
+                      </div>
+                      <div style={{ 
+                        fontSize: '11px', 
+                        color: 'var(--text-secondary)',
+                        lineHeight: '1.3'
+                      }}>
+                        Model nội bộ - Xử lý offline
+                      </div>
+                    </div>
+                    {selectedModel === 'Llama' && (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                        <path d="M20 6L9 17l-5-5" stroke="var(--primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+            </div>
           </div>
         </div>
 
