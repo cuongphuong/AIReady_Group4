@@ -16,6 +16,9 @@ ENV/
 *.sqlite
 *.sqlite3
 
+# ChromaDB
+Server/chroma_db/
+
 # Uploads
 Server/uploads/
 Server/utils/uploads/

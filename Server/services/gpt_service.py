@@ -31,7 +31,7 @@ class GPTService:
     def __init__(self):
         self.client = client
         self.model_name = model_name
-        logger.info(f"GPT Service initialized with model: {model_name}")
+        logger.debug(f"GPT Service initialized with model: {model_name}")
     
     async def _call_model_with_retries(
         self, call_kwargs: dict, retries: int = 3, backoff_factor: float = 0.5
@@ -100,9 +100,6 @@ Thông tin bug cần phân loại (có thể chứa nhiều trường, hãy tự
 >>>
         """
         
-        logger.info(f"🤖 Using GPT model: {self.model_name}")
-        logger.info(f"📤 Prompt length: {len(prompt)} chars")
-        
         # Function definition cho structured output
         classify_function = {
             "name": "classify_bug_report",
@@ -151,14 +148,12 @@ Thông tin bug cần phân loại (có thể chứa nhiều trường, hãy tự
             call_kwargs["temperature"] = 0.0
         
         response = await self._call_model_with_retries(call_kwargs)
-        logger.info("📥 Received GPT response")
         
         # Extract function call result
         message = response.choices[0].message
         if message.function_call:
             try:
                 args = json.loads(message.function_call.arguments)
-                logger.info(f"📋 Function call args: {args}")
                 
                 result = {
                     "label": args.get("label"),
@@ -166,8 +161,7 @@ Thông tin bug cần phân loại (có thể chứa nhiều trường, hãy tự
                     "team": args.get("team"),
                     "severity": args.get("severity"),
                 }
-                logger.info(f"✅ GPT result: {result}")
-                logger.info("="*80 + "\n")
+                logger.info(f"✅ {result['label']} - {result.get('team', 'N/A')}")
                 return result
             except Exception as e:
                 logger.error(f"❌ Function call parse error: {e}")
@@ -189,8 +183,7 @@ Thông tin bug cần phân loại (có thể chứa nhiều trường, hãy tự
                         "team": team,
                         "severity": severity
                     }
-                    logger.info(f"✅ Fallback parsed result: {result}")
-                    logger.info("="*80 + "\n")
+                    logger.info(f"✅ {label} (fallback)")
                     return result
             except Exception as e:
                 logger.error(f"❌ JSON parse error: {e}")
@@ -330,11 +323,9 @@ Danh sách báo cáo cần phân loại (format [index]: text):
         if not self.model_name.startswith("gpt-5"):
             call_kwargs["temperature"] = 0.0
         
-        logger.info(f"🤖 Calling GPT for batch classification...")
         response = await self._call_model_with_retries(
             call_kwargs, retries=4, backoff_factor=0.6
         )
-        logger.info("📥 Received batch GPT response")
         
         # Extract function call result
         message = response.choices[0].message

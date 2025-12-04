@@ -13,6 +13,13 @@ from typing import List, Optional
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Tắt log HTTP requests từ httpx
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
+# Enable debug logs for semantic search details
+# Uncomment dòng dưới để thấy chi tiết similarity scores:
+# logger.setLevel(logging.DEBUG)
+
 # Import configuration từ package config
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
@@ -44,6 +51,20 @@ except Exception as e:
     LLAMA_AVAILABLE = False
     logger.error(f"❌ Error importing Llama service: {e}")
 
+# Import ChromaDB vector store
+try:
+    from models.vector_store import (
+        search_similar_classified_bugs,
+        get_dynamic_few_shot_examples,
+        add_classified_bug_to_vector_store,
+        get_vector_store_stats
+    )
+    CHROMA_AVAILABLE = True
+    logger.info("✅ ChromaDB vector store available")
+except ImportError as e:
+    CHROMA_AVAILABLE = False
+    logger.warning(f"⚠️ ChromaDB not available: {e}")
+
 
 # Helper functions
 def _label_line(label, v):
@@ -64,60 +85,69 @@ example_text = "\n".join(
 )
 
 def _quick_heuristic_for_text(description: str):
-    """Phân loại nhanh bằng keyword matching (whole word only)"""
+    """Phân loại nhanh bằng keyword matching - yêu cầu >60% từ trong câu match với keywords"""
     import re
     
     desc_lower = (description or "").lower()
+    
+    # Tách các từ trong description (bỏ ký tự đặc biệt)
+    desc_words = re.findall(r'\b\w+\b', desc_lower)
+    total_words = len(desc_words)
+    
+    if total_words == 0:
+        return None
+    
     keyword_scores = {}
     keyword_matches = {}
+    match_percentages = {}
 
     for label, v in BUG_LABELS.items():
         kws = v.get("keywords") or []
-        score = 0
+        matched_words = set()
         matches = []
+        
         for kw in kws:
             if not kw:
                 continue
-            # Chỉ match whole word để tránh false positive (VD: "load" trong "Download")
-            # Use word boundary \b to match complete words only
-            pattern = r'\b' + re.escape(kw.lower()) + r'\b'
+            kw_lower = kw.lower()
+            # Match whole word
+            pattern = r'\b' + re.escape(kw_lower) + r'\b'
             if re.search(pattern, desc_lower):
-                score += 1
                 matches.append(kw)
-        keyword_scores[label] = score
+                # Đếm các từ trong keyword được match
+                kw_words = re.findall(r'\b\w+\b', kw_lower)
+                matched_words.update(kw_words)
+        
+        # Tính % từ trong description được match bởi keywords
+        matched_desc_words = sum(1 for word in desc_words if word in matched_words)
+        match_percentage = (matched_desc_words / total_words) * 100
+        
+        keyword_scores[label] = len(matches)
+        match_percentages[label] = match_percentage
         if matches:
             keyword_matches[label] = matches
 
-    if keyword_scores:
-        best_label = max(keyword_scores, key=lambda k: keyword_scores[k])
-        # Yêu cầu ít nhất 2 keywords match để tin tưởng hơn (hoặc 1 keyword nếu match duy nhất)
-        if keyword_scores[best_label] >= 2:
-            top_scores = [
-                s for s in keyword_scores.values() if s == keyword_scores[best_label]
-            ]
-            if len(top_scores) == 1:
-                team = LABEL_TO_TEAM.get(best_label)
-                return {
-                    "label": best_label,
-                    "reason": f"Matched keywords: {', '.join(keyword_matches.get(best_label, []))} (heuristic)",
-                    "team": team,
-                }
-        # Nếu chỉ có 1 keyword match và không có label nào khác match, chấp nhận
-        elif keyword_scores[best_label] == 1:
-            total_matches = sum(1 for s in keyword_scores.values() if s > 0)
-            if total_matches == 1:  # Chỉ có 1 label match duy nhất
-                team = LABEL_TO_TEAM.get(best_label)
-                return {
-                    "label": best_label,
-                    "reason": f"Matched keyword: {', '.join(keyword_matches.get(best_label, []))} (heuristic)",
-                    "team": team,
+    # Tìm label có % match cao nhất và > 60%
+    if match_percentages:
+        best_label = max(match_percentages, key=lambda k: match_percentages[k])
+        best_percentage = match_percentages[best_label]
+        
+        if best_percentage > 60:
+            team = LABEL_TO_TEAM.get(best_label)
+            return {
+                "label": best_label,
+                "reason": f"Matched {best_percentage:.0f}% keywords: {', '.join(keyword_matches.get(best_label, []))} (heuristic)",
+                "team": team,
                 }
     return None
 
 
 async def classify_bug(description: str, model: str = "GPT-5"):
     """
-    Phân loại bug report
+    Phân loại bug report với multi-layer approach:
+    1. Keyword heuristic (nhanh nhất)
+    2. Semantic search từ ChromaDB (cached bugs)
+    3. LLM classification với dynamic few-shot examples
     
     Args:
         description: Mô tả bug
@@ -127,13 +157,63 @@ async def classify_bug(description: str, model: str = "GPT-5"):
     logger.info(f"🔍 CLASSIFY_BUG - Model: {model}")
     logger.info(f"📝 Input: {description[:100]}..." if len(description) > 100 else f"📝 Input: {description}")
     
-    # Bước 1: Thử heuristic matching (nhanh nhất)
+    # Bước 1: Thử keyword heuristic (nhanh nhất)
     heuristic_result = _quick_heuristic_for_text(description)
     if heuristic_result:
         logger.info(f"⚡ Heuristic match: {heuristic_result}")
+        # Không lưu vào ChromaDB - quá rõ ràng, chỉ dựa vào keywords
         return heuristic_result
     
-    # Bước 2: Xử lý theo model được chọn
+    # Xác định embedding type dựa trên model
+    use_local = (model == "Llama")
+    
+    # Bước 2: Semantic search trong ChromaDB (bugs đã classify)
+    if CHROMA_AVAILABLE:
+        try:
+            similar_bugs = search_similar_classified_bugs(
+                query=description,
+                top_k=1,
+                similarity_threshold=0.85,  # High similarity threshold (85%)
+                use_local_embeddings=use_local
+            )
+            
+            if similar_bugs and len(similar_bugs) > 0:
+                best_match = similar_bugs[0]
+                similarity = best_match.get('similarity', 0)
+                
+                if similarity >= 0.85:  # Very similar bug found
+                    result = {
+                        'label': best_match['metadata']['label'],
+                        'reason': f"Similar to: '{best_match['text'][:60]}...' (semantic: {similarity:.0%})",
+                        'team': best_match['metadata'].get('team'),
+                        'severity': best_match['metadata'].get('severity')
+                    }
+                    logger.info(f"🎯 Semantic match: {result}")
+                    # Không lưu vào ChromaDB - đã có bug tương tự trong DB
+                    return result
+        except Exception as e:
+            logger.warning(f"⚠️ ChromaDB search failed: {e}")
+    
+    # Bước 3: Get dynamic few-shot examples từ ChromaDB
+    dynamic_examples = FEW_SHOT_EXAMPLES  # Default
+    if CHROMA_AVAILABLE:
+        try:
+            retrieved_examples = get_dynamic_few_shot_examples(
+                description,
+                top_k=5,
+                use_local_embeddings=use_local
+            )
+            if retrieved_examples:
+                # Convert to format compatible với existing code
+                dynamic_examples = [
+                    {'description': ex['description'], 'label': ex['label']}
+                    for ex in retrieved_examples
+                ]
+                logger.info(f"✅ Using {len(dynamic_examples)} dynamic examples")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to get dynamic examples: {e}")
+    
+    # Bước 4: LLM classification theo model được chọn
     if model == "Llama":
         # Xử lý LLAMA
         if not LLAMA_AVAILABLE:
@@ -147,12 +227,28 @@ async def classify_bug(description: str, model: str = "GPT-5"):
                 llama_service.classify_bug,
                 description,
                 list(BUG_LABELS.keys()),
-                FEW_SHOT_EXAMPLES
+                dynamic_examples  # Use dynamic examples
             )
             # Map team
             if not result.get('team') and result.get('label'):
                 result['team'] = LABEL_TO_TEAM.get(result['label'])
             logger.info(f"✅ Llama result: {result}")
+            
+            # Lưu vào ChromaDB để học từ classification này (dùng local embeddings cho Llama)
+            if CHROMA_AVAILABLE and result.get('label'):
+                try:
+                    add_classified_bug_to_vector_store(
+                        bug_text=description,
+                        label=result['label'],
+                        reason=result.get('reason', ''),
+                        team=result.get('team'),
+                        severity=result.get('severity'),
+                        use_local_embeddings=True  # Local embeddings cho Llama
+                    )
+                    logger.info("💾 Saved to vector store (LOCAL embeddings)")
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to save to vector store: {e}")
+            
             return result
         except Exception as e:
             logger.error(f"❌ Llama lỗi: {e}")
@@ -180,6 +276,22 @@ async def classify_bug(description: str, model: str = "GPT-5"):
             if not result.get('team') and result.get('label'):
                 result['team'] = LABEL_TO_TEAM.get(result['label'])
             logger.info(f"✅ GPT result: {result}")
+            
+            # Lưu vào ChromaDB để học từ classification này (dùng OpenAI embeddings cho GPT)
+            if CHROMA_AVAILABLE and result.get('label'):
+                try:
+                    add_classified_bug_to_vector_store(
+                        bug_text=description,
+                        label=result['label'],
+                        reason=result.get('reason', ''),
+                        team=result.get('team'),
+                        severity=result.get('severity'),
+                        use_local_embeddings=False  # OpenAI embeddings cho GPT
+                    )
+                    logger.info("💾 Saved to vector store (OPENAI embeddings)")
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to save to vector store: {e}")
+            
             return result
         except Exception as e:
             logger.error(f"❌ GPT lỗi: {e}")
@@ -196,7 +308,10 @@ async def batch_classify(descriptions: List[str], model: str = "GPT-5"):
     logger.info(f"📦 BATCH_CLASSIFY - Model: {model}, Count: {len(descriptions)}")
     results: List[Optional[dict]] = [None] * len(descriptions)
 
-    # Heuristic pass
+    # Xác định embedding type
+    use_local = (model == "Llama")
+    
+    # TIER 1: Heuristic pass (keyword matching >60%)
     remaining_indexes = []
     for i, desc in enumerate(descriptions):
         h = _quick_heuristic_for_text(desc)
@@ -205,13 +320,62 @@ async def batch_classify(descriptions: List[str], model: str = "GPT-5"):
         else:
             remaining_indexes.append(i)
     
-    logger.info(f"⚡ Heuristic matched: {len(descriptions) - len(remaining_indexes)}/{len(descriptions)}")
-    logger.info(f"🔄 Remaining for model: {len(remaining_indexes)}")
+    logger.info(f"⚡ Tier 1 Heuristic: {len(descriptions) - len(remaining_indexes)}/{len(descriptions)} matched")
 
     if not remaining_indexes:
+        # Heuristic match 100% → Không cần lưu vào ChromaDB (quá rõ ràng)
         return results
     
-    # Xử lý theo model được chọn
+    # TIER 2: ChromaDB Semantic Search (>85% similarity)
+    semantic_remaining = []
+    if CHROMA_AVAILABLE:
+        logger.info(f"🔍 Tier 2 Semantic Search: Checking {len(remaining_indexes)} bugs...")
+        for idx in remaining_indexes:
+            try:
+                query_text = descriptions[idx]
+                logger.debug(f"Searching for bug {idx}: {query_text[:100]}...")
+                
+                similar_bugs = search_similar_classified_bugs(
+                    query=query_text,
+                    top_k=3,  # Lấy 3 kết quả để debug
+                    similarity_threshold=0.0,  # Tắt threshold để thấy tất cả
+                    use_local_embeddings=use_local
+                )
+                
+                if similar_bugs and len(similar_bugs) > 0:
+                    best_match = similar_bugs[0]
+                    similarity = best_match.get('similarity', 0)
+                    
+                    # Debug: In ra top 3 matches
+                    if len(similar_bugs) > 1:
+                        logger.info(f"   Bug {idx} top matches: " + ", ".join([f"{s.get('similarity', 0):.1%}" for s in similar_bugs[:3]]))
+                    
+                    if similarity >= 0.85:
+                        results[idx] = {
+                            'label': best_match['metadata']['label'],
+                            'reason': f"Similar: '{best_match['text'][:40]}...' ({similarity:.0%})",
+                            'team': best_match['metadata'].get('team'),
+                            'severity': best_match['metadata'].get('severity')
+                        }
+                        continue
+                    else:
+                        # Similarity < 85% → Không đủ tin cậy, cần LLM
+                        logger.info(f"   Bug {idx}: Found similar but only {similarity:.1%} < 85% threshold")
+            except Exception as e:
+                logger.error(f"❌ Semantic search failed for bug {idx}: {e}", exc_info=True)
+            
+            semantic_remaining.append(idx)
+        
+        semantic_matched = len(remaining_indexes) - len(semantic_remaining)
+        logger.info(f"✅ Tier 2 Semantic: {semantic_matched}/{len(remaining_indexes)} matched")
+        remaining_indexes = semantic_remaining
+    
+    if not remaining_indexes:
+        # Semantic match từ ChromaDB → Không cần lưu lại (đã có trong DB)
+        return results
+    
+    # TIER 3 & 4: LLM Classification với dynamic few-shot examples
+    logger.info(f"🤖 Tier 3+4 LLM: Processing {len(remaining_indexes)} bugs with {model}...")
     if model == "Llama":
         # Xử lý LLAMA batch
         if not LLAMA_AVAILABLE:
@@ -256,8 +420,6 @@ async def batch_classify(descriptions: List[str], model: str = "GPT-5"):
                     logger.error(f"❌ Llama lỗi bug {idx}: {e2}")
                     results[idx] = {"label": "", "reason": f"Llama error: {str(e2)}", "team": None, "severity": None}
         
-        logger.info(f"✅ Batch classification complete: {len(results)} results")
-        return results
     
     elif model == "GPT-5":
         # Xử lý GPT batch
@@ -314,7 +476,28 @@ async def batch_classify(descriptions: List[str], model: str = "GPT-5"):
                     "team": None,
                 }
     
+    # TIER 5: Lưu tất cả kết quả vào ChromaDB để học và cải thiện
+    if CHROMA_AVAILABLE:
+        saved_count = 0
+        for i, result in enumerate(results):
+            if result and result.get('label'):
+                try:
+                    add_classified_bug_to_vector_store(
+                        bug_text=descriptions[i],
+                        label=result['label'],
+                        reason=result.get('reason', ''),
+                        team=result.get('team'),
+                        severity=result.get('severity'),
+                        use_local_embeddings=use_local
+                    )
+                    saved_count += 1
+                except Exception as e:
+                    logger.debug(f"Failed to save bug {i}: {e}")
+        
+        logger.info(f"💾 Saved {saved_count}/{len(results)} results to ChromaDB")
+    
     logger.info(f"✅ Batch classification complete: {len(results)} results")
+    logger.info(f"{'='*80}\n")
     return results
 
 

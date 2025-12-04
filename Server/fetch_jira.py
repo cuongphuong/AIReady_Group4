@@ -4,6 +4,39 @@ from dotenv import load_dotenv
 import json
 from requests.auth import HTTPBasicAuth
 
+def extract_text_from_adf(adf_content):
+    """
+    Extract plain text from Atlassian Document Format (ADF).
+    ADF is a JSON structure used by Jira for rich text fields.
+    """
+    if not isinstance(adf_content, dict):
+        return str(adf_content)
+    
+    text_parts = []
+    
+    def extract_from_node(node):
+        if isinstance(node, dict):
+            node_type = node.get('type')
+            
+            # Text node
+            if node_type == 'text':
+                text_parts.append(node.get('text', ''))
+            
+            # Process content array
+            if 'content' in node:
+                for child in node['content']:
+                    extract_from_node(child)
+            
+            # Add spacing for paragraphs
+            if node_type in ['paragraph', 'heading']:
+                text_parts.append(' ')
+        elif isinstance(node, list):
+            for item in node:
+                extract_from_node(item)
+    
+    extract_from_node(adf_content)
+    return ' '.join(text_parts).strip()
+
 # Load environment variables
 load_dotenv()
 
@@ -52,9 +85,25 @@ def fetch_jira_issues(jql: str):
         for issue in issues:
             key = issue.get("key")
             fields = issue.get("fields", {})
-            summary = fields.get("summary")
+            summary = fields.get("summary", "")
+            description = fields.get("description")
             status = fields.get("status", {}).get("name")
-            formatted_issues.append({"key": key, "summary": summary, "status": status})
+            
+            # Extract plain text from description (Jira uses ADF format)
+            description_text = ""
+            if description:
+                if isinstance(description, dict):
+                    # ADF (Atlassian Document Format) - extract text from content
+                    description_text = extract_text_from_adf(description)
+                else:
+                    description_text = str(description)
+            
+            formatted_issues.append({
+                "key": key,
+                "summary": summary,
+                "description": description_text,
+                "status": status
+            })
         
         return formatted_issues
             

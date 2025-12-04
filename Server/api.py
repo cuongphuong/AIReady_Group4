@@ -312,7 +312,7 @@ async def upload_file(file: UploadFile = File(...), session_id: Optional[str] = 
 async def download_result():
     """
     Download kết quả phân loại dưới dạng CSV
-    Columns: No, Nội dung bug, Label, Giải thích, Team, Severity
+    Columns: No, Nội dung bug, Label, Memo, Team, Severity
     """
     global latest_results
     
@@ -332,7 +332,7 @@ async def download_result():
     original_columns = list(original_rows[0].keys()) if isinstance(original_rows[0], dict) else []
     
     # Write header: các cột gốc + các cột bổ sung
-    header = original_columns + ['Label', 'Giải thích', 'Team', 'Severity']
+    header = original_columns + ['Label', 'Memo', 'Team', 'Severity']
     writer.writerow(header)
     
     # Write data rows
@@ -403,7 +403,7 @@ async def download_excel(req: DownloadExcelRequest):
     orange_header_fill = PatternFill(start_color="FF8C00", end_color="FF8C00", fill_type="solid")
     
     # Write headers: các cột gốc + các cột bổ sung
-    all_headers = original_columns + ['Label', 'Giải thích', 'Team', 'Severity']
+    all_headers = original_columns + ['Label', 'Memo', 'Team', 'Severity']
     num_original_cols = len(original_columns)
     
     for col_idx, header in enumerate(all_headers, 1):
@@ -457,7 +457,7 @@ async def download_excel(req: DownloadExcelRequest):
             # Các cột bổ sung rộng hơn
             if col_idx == num_original_cols + 1:  # Label
                 ws.column_dimensions[col_letter].width = 15
-            elif col_idx == num_original_cols + 2:  # Giải thích
+            elif col_idx == num_original_cols + 2:  # Memo
                 ws.column_dimensions[col_letter].width = 35
             elif col_idx == num_original_cols + 3:  # Team
                 ws.column_dimensions[col_letter].width = 20
@@ -562,11 +562,20 @@ async def list_uploads(session_id: Optional[str] = None, limit: int = 50):
 
 @app.get("/statistics")
 async def get_stats():
-    """Get statistics"""
+    """Get statistics including vector store stats"""
     if not DATABASE_ENABLED:
         raise HTTPException(status_code=503, detail="database not available")
     
     stats = get_statistics()
+    
+    # Add vector store stats if available
+    try:
+        from models.vector_store import get_vector_store_stats
+        vector_stats = get_vector_store_stats()
+        stats['vector_store'] = vector_stats
+    except:
+        stats['vector_store'] = {"available": False}
+    
     return stats
 
 
@@ -614,6 +623,21 @@ async def fetch_jira(req: JiraRequest):
         return {"issues": issues}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+
+
+# ============================================================================
+# ChromaDB Vector Store Endpoints
+# ============================================================================
+
+@app.get("/vector/stats")
+async def vector_stats():
+    """Get ChromaDB vector store statistics"""
+    try:
+        from models.vector_store import get_vector_store_stats
+        stats = get_vector_store_stats()
+        return stats
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get stats: {str(e)}")
 
 
 # uvicorn entrypoint hint

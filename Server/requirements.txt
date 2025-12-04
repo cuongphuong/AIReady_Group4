@@ -7,9 +7,8 @@ pandas
 openpyxl
 python-multipart
 requests
+llama-cpp-python
 transformers
-accelerate
-torch
+sentence-transformers
 psutil
-auto-gptq
-optimum
+chromadb==1.3.5

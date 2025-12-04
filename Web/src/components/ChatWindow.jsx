@@ -632,9 +632,14 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
     // Store Jira issues for later assignment
     window.lastJiraIssues = issuesToClassify;
 
-    // Create a CSV string in memory
-    const csvHeader = "No,Nội dung bug\n";
-    const csvBody = issuesToClassify.map(issue => `"${issue.key}","${issue.summary.replace(/"/g, '""')}"`).join('\n');
+    // Create a CSV string in memory with description
+    const csvHeader = "Key,Summary,Description\n";
+    const csvBody = issuesToClassify.map(issue => {
+      const key = issue.key || '';
+      const summary = (issue.summary || '').replace(/"/g, '""');
+      const description = (issue.description || '').replace(/"/g, '""');
+      return `"${key}","${summary}","${description}"`;
+    }).join('\n');
     const csvContent = csvHeader + csvBody;
     
     // Create a Blob and File object

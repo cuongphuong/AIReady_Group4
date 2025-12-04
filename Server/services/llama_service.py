@@ -63,14 +63,15 @@ class LlamaService:
             logger.info("⚡ Using 4-bit quantization (optimized for CPU)")
             
             # Load model with llama-cpp-python
-            # n_ctx: context window size
-            # n_threads: number of CPU threads (None = auto-detect)
-            # n_gpu_layers: 0 for CPU only
+            # Tối ưu cho CPU I5 4 core 8 threads
             self.model = Llama(
                 model_path=self.model_path,
                 n_ctx=2048,  # Context window
-                n_threads=None,  # Auto-detect CPU threads
+                n_threads=8,  # Dùng hết 8 threads
+                n_batch=512,  # Tăng batch size cho throughput cao hơn
                 n_gpu_layers=0,  # CPU only
+                use_mlock=True,  # Lock RAM để tránh swap (tăng tốc)
+                use_mmap=True,  # Memory-mapped file (load nhanh hơn)
                 verbose=False
             )
             
@@ -101,10 +102,14 @@ class LlamaService:
         logger.info("🧠 Generating response with GGUF model...")
         
         # Generate with llama-cpp-python
+        # Tối ưu generation params cho CPU (threads đã set khi load model)
         output = self.model(
             prompt,
             max_tokens=max_new_tokens,
             temperature=temperature,
+            top_p=0.95,  # Nucleus sampling
+            top_k=40,  # Top-K sampling (giảm số lượng tokens xem xét)
+            repeat_penalty=1.1,  # Tránh lặp lại
             stop=["<|eot_id|>", "<|end_of_text|>", "\n\n\n"],  # Llama 3 stop tokens
             echo=False  # Don't include prompt in output
         )

@@ -38,51 +38,202 @@
 2. **User**: Nhập nội dung bug report qua terminal/console.
 3. **Chatbot**: Dựa vào đầu vào và tiêu chuẩn của system, AI chọn ra nhãn phù hợp nhất cho bug report.
 
-## 3. Định hướng và mở rộng
-- Có UI dạng chatbot để dễ dàng sử dụng
-- Khả năng xử lý hàng loạt bằng cách input file
-- Đối chiếu dữ liệu đã phân tích với các nhóm đã phân loại trước đó tránh sảy ra sai sót
-- Đưa ra hướng dẩn về cách khắc phục và action tránh lặp lại
+## 3. ChromaDB Integration - Semantic Search & Vector Database
+
+### 🏗️ Kiến Trúc Phân Loại 3-Tier
+
+Hệ thống sử dụng ChromaDB để tăng độ chính xác và tốc độ phân loại:
+
+```
+Input Bug Report
+    ↓
+┌───────────────────┐
+│ 1. Keyword        │  ← Nhanh nhất (regex matching)
+│    Heuristic      │
+└───────────────────┘
+    ↓ (not matched)
+┌───────────────────┐
+│ 2. ChromaDB       │  ← Semantic search (85% similarity)
+│    Semantic Search│     Tìm bugs tương tự đã phân loại
+└───────────────────┘
+    ↓ (not matched)
+┌───────────────────┐
+│ 3. Dynamic        │  ← Lấy examples phù hợp từ ChromaDB
+│    Few-Shot       │
+└───────────────────┘
+    ↓
+┌───────────────────┐
+│ 4. LLM            │  ← GPT-5 / Llama với context tốt hơn
+│    Classification │
+└───────────────────┘
+    ↓
+┌───────────────────┐
+│ 5. Save to        │  ← Lưu kết quả để học từ dữ liệu
+│    ChromaDB       │
+└───────────────────┘
+```
 ---
 
-## 4. Hướng Dẫn Cài Đặt, Khởi Động Console
+## 5. Hướng Dẫn Cài Đặt, Khởi Động Hệ Thống
 
 ### Bước 1: Chuẩn bị môi trường
 
 - **Cài đặt Python**  
   Đảm bảo máy đã cài Python >= 3.8
 
-- **Tải source code**
-  Clone file source code `bug_classifier.py `
-
-- **Cài đặt thư viện OpenAI,  `python-dotenv`.**  
-  Mở terminal/cmd và chạy lệnh:
+- **Clone repository**
   ```bash
-  pip install openai python-dotenv
+  git clone https://github.com/cuongphuong/AIReady_Group4.git
+  cd AIReady_Group4
   ```
 
-- **Đăng ký API Key OpenAI**  
-  Tạo tài khoản tại [OpenAI](https://platform.openai.com/) & lấy key, lưu vào biến môi trường, **.env**
+- **Cài đặt dependencies Backend**  
   ```bash
+  cd Server
+  pip install -r requirements.txt
+  ```
+
+- **Cài đặt dependencies Frontend**  
+  ```bash
+  cd Web
+  npm install
+  ```
+
+- **Cấu hình API Keys**  
+  Tạo file `.env` trong thư mục `Server/`:
+  ```bash
+  # GPT-4o-mini configuration
   OPENAI_API_KEY=your_openai_key_here
   OPENAI_API_BASE_URL=your_openai_url_here
+  MODEL_NAME=GPT-4o-mini
+
+  # Embedding model configuration (ChromaDB)
+  DB_OPENAI_API_KEY=your_embedding_key_here
+  DB_OPENAI_API_BASE_URL=your_embedding_url_here
+  DB_MODEL_NAME=text-embedding-3-small
+
+  # JIRA configuration (optional)
+  JIRA_TOKEN=your_jira_token
+  JIRA_BASE_URL=https://your-domain.atlassian.net
+  JIRA_EMAIL=your_email@example.com
   ```
 
-### Bước 2: Khởi chạy ứng dụng
+### Bước 2: Khởi tạo ChromaDB Vector Store
 
-- Mở terminal/cmd, di chuyển đến thư mục chứa file **bug_classifier.py**.
-- Chạy lệnh:
-  ```bash
-  python bug_classifier.py
-  ```
-- Nhập nội dung bug report khi được yêu cầu, ví dụ:
-  ```
-  Nhập nội dung bug report: Khi bấm nút Submit không hiện thông báo xác nhận.
-  ```
+```bash
+cd Server
+python -c "from models.vector_store import init_vector_store; init_vector_store()"
+```
 
-- **Kết quả nhận được:**
-  ```
-  Bug report: Khi bấm nút Submit không hiện thông báo xác nhận.
-  Phân loại: UI
-  ```
+### Bước 3: Khởi động Backend Server
+
+```bash
+cd Server
+uvicorn api:app --reload --port 8000
+```
+
+Server sẽ chạy tại: `http://localhost:8000`
+
+### Bước 4: Khởi động Frontend
+
+```bash
+cd Web
+npm run dev
+```
+
+Web app sẽ chạy tại: `http://localhost:5173`
+
+### Bước 5: Sử dụng ứng dụng
+
+1. Mở trình duyệt và truy cập `http://localhost:5173`
+2. Nhập bug report vào ô chat hoặc upload file Excel
+3. Chọn model AI (GPT-5 hoặc Llama 3.1)
+4. Xem kết quả phân loại với label, reason, team, severity
+5. Download kết quả dạng Excel bất cứ lúc nào
+
+**Ví dụ:**
+```
+Input: "Khi bấm nút Submit không hiện thông báo xác nhận"
+Output: 
+  - Label: UI
+  - Reason: Missing confirmation dialog
+  - Team: Frontend Team
+  - Severity: Medium
+```
+
+---
+
+## 6. Cấu Trúc Project
+
+```
+AIReady_Group4/
+├── Server/                      # Backend FastAPI
+│   ├── api.py                  # REST API endpoints
+│   ├── services/
+│   │   ├── classifier.py       # 3-tier classification logic
+│   │   ├── gpt_service.py      # GPT-5 integration
+│   │   ├── llama_service.py    # Llama 3.1 integration
+│   │   └── chroma_service.py   # ChromaDB vector database
+│   ├── models/
+│   │   ├── database.py         # SQLite operations
+│   │   └── vector_store.py     # ChromaDB operations
+│   ├── config/
+│   │   ├── bug_labels.py       # 20 label definitions
+│   │   └── examples.py         # Few-shot examples
+│   ├── chroma_db/              # Vector database storage
+│   ├── gguf/                   # Llama GGUF models
+│   └── requirements.txt
+│
+├── Web/                         # Frontend React
+│   ├── src/
+│   │   ├── App.jsx             # Main app component
+│   │   ├── components/
+│   │   │   ├── ChatWindow.jsx  # Chat interface
+│   │   │   ├── Sidebar.jsx     # History sidebar
+│   │   │   └── Message.jsx     # Message component
+│   │   └── styles.css
+│   └── package.json
+│
+├── Docs/                        # Documentation
+└── README.md                    # This file
+```
+
+---
+
+## 7. Tech Stack
+
+**Backend:**
+- Python 3.8+
+- FastAPI - REST API framework
+- ChromaDB - Vector database
+- SQLite - Relational database
+- OpenAI API - GPT-5
+- Llama 3.1 8B - Local LLM
+- sentence-transformers - Local embeddings
+
+**Frontend:**
+- React 18
+- Vite - Build tool
+- Tailwind CSS - Styling
+
+**AI Models:**
+- GPT-5 (OpenAI API)
+- Llama 3.1 8B Instruct (GGUF quantized)
+- text-embedding-3-small (OpenAI embeddings)
+
+---
+
+## 8. Tài Liệu Tham Khảo
+
+- [ChromaDB Documentation](https://docs.trychroma.com/)
+- [FastAPI Documentation](https://fastapi.tiangolo.com/)
+- [React Documentation](https://react.dev/)
+- [OpenAI API Reference](https://platform.openai.com/docs/)
+- [Llama Models](https://github.com/meta-llama/llama)
+
+---
+
+**Last Updated:** 2025-12-04  
+**Version:** 2.0.0  
+**Contributors:** AIReady Group 4
 ---
