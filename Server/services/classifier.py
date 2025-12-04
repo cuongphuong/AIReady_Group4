@@ -64,7 +64,9 @@ example_text = "\n".join(
 )
 
 def _quick_heuristic_for_text(description: str):
-    """Phân loại nhanh bằng keyword matching"""
+    """Phân loại nhanh bằng keyword matching (whole word only)"""
+    import re
+    
     desc_lower = (description or "").lower()
     keyword_scores = {}
     keyword_matches = {}
@@ -76,7 +78,10 @@ def _quick_heuristic_for_text(description: str):
         for kw in kws:
             if not kw:
                 continue
-            if kw.lower() in desc_lower:
+            # Chỉ match whole word để tránh false positive (VD: "load" trong "Download")
+            # Use word boundary \b to match complete words only
+            pattern = r'\b' + re.escape(kw.lower()) + r'\b'
+            if re.search(pattern, desc_lower):
                 score += 1
                 matches.append(kw)
         keyword_scores[label] = score
@@ -85,7 +90,8 @@ def _quick_heuristic_for_text(description: str):
 
     if keyword_scores:
         best_label = max(keyword_scores, key=lambda k: keyword_scores[k])
-        if keyword_scores[best_label] > 0:
+        # Yêu cầu ít nhất 2 keywords match để tin tưởng hơn (hoặc 1 keyword nếu match duy nhất)
+        if keyword_scores[best_label] >= 2:
             top_scores = [
                 s for s in keyword_scores.values() if s == keyword_scores[best_label]
             ]
@@ -94,6 +100,16 @@ def _quick_heuristic_for_text(description: str):
                 return {
                     "label": best_label,
                     "reason": f"Matched keywords: {', '.join(keyword_matches.get(best_label, []))} (heuristic)",
+                    "team": team,
+                }
+        # Nếu chỉ có 1 keyword match và không có label nào khác match, chấp nhận
+        elif keyword_scores[best_label] == 1:
+            total_matches = sum(1 for s in keyword_scores.values() if s > 0)
+            if total_matches == 1:  # Chỉ có 1 label match duy nhất
+                team = LABEL_TO_TEAM.get(best_label)
+                return {
+                    "label": best_label,
+                    "reason": f"Matched keyword: {', '.join(keyword_matches.get(best_label, []))} (heuristic)",
                     "team": team,
                 }
     return None

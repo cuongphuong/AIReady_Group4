@@ -187,7 +187,6 @@ async def upload_file(file: UploadFile = File(...), session_id: Optional[str] = 
     
     try:
         content = await file.read()
-        
         # Save file to disk if database is enabled
         file_path = None
         file_size = len(content)
@@ -196,54 +195,49 @@ async def upload_file(file: UploadFile = File(...), session_id: Optional[str] = 
             file_size = get_file_size(file_path)
         
         # Parse CSV or Excel
-        bugs_with_no = []
+        bugs_with_rows = []
         
         if file.filename.endswith('.csv'):
-            # Parse CSV
             stream = io.StringIO(content.decode('utf-8'))
             reader = csv.DictReader(stream)
             rows = list(reader)
             
+            # Nối toàn bộ cột thành 1 chuỗi
             for row in rows:
-                no = row.get('No') or row.get('no') or ''
-                bug = row.get('Nội dung bug') or row.get('noi dung bug') or row.get('Bug') or ''
-                if bug.strip():
-                    bugs_with_no.append({'no': no, 'bug': bug.strip()})
+                # Clean row: thay thế nan, None, empty bằng empty string
+                cleaned_row = {k: ('' if v is None or str(v).lower() == 'nan' or not str(v).strip() else str(v).strip()) for k, v in row.items()}
+                # Nối tất cả giá trị cột thành 1 chuỗi, phân cách bằng | 
+                combined_text = " | ".join([f"{k}: {v}" for k, v in cleaned_row.items() if v])
+                bugs_with_rows.append({
+                    'original_row': cleaned_row,
+                    'combined_text': combined_text
+                })
         
         elif file.filename.endswith(('.xlsx', '.xls')):
-            # Parse Excel
             if pd is None:
                 raise HTTPException(status_code=400, detail="pandas not installed for Excel support")
             
             df = pd.read_excel(io.BytesIO(content))
             
-            # Look for columns with 'No' and 'Nội dung bug' (flexible matching)
-            no_col = None
-            bug_col = None
-            for col in df.columns:
-                col_lower = str(col).lower()
-                if 'no' in col_lower and no_col is None:
-                    no_col = col
-                if 'nội dung' in col_lower or 'bug' in col_lower:
-                    bug_col = col
-            
-            if bug_col is None:
-                raise HTTPException(status_code=400, detail="Excel file must have 'Nội dung bug' column")
-            
+            # Nối toàn bộ cột thành 1 chuỗi
             for idx, row in df.iterrows():
-                no = str(row[no_col]) if no_col else str(idx + 1)
-                bug = str(row[bug_col]).strip()
-                if bug:
-                    bugs_with_no.append({'no': no, 'bug': bug})
+                # Clean row: thay thế NaN, None bằng empty string
+                cleaned_row = {k: ('' if pd.isna(v) else str(v).strip()) for k, v in row.items()}
+                # Nối tất cả giá trị cột thành 1 chuỗi
+                combined_text = " | ".join([f"{k}: {v}" for k, v in cleaned_row.items() if v])
+                bugs_with_rows.append({
+                    'original_row': cleaned_row,
+                    'combined_text': combined_text
+                })
         
         else:
             raise HTTPException(status_code=400, detail="only CSV and Excel files are supported")
         
-        if not bugs_with_no:
+        if not bugs_with_rows:
             raise HTTPException(status_code=400, detail="no valid bug entries found in file")
         
-        # Extract just the bug texts for classification
-        bug_texts = [item['bug'] for item in bugs_with_no]
+        # Extract combined texts for classification
+        bug_texts = [item['combined_text'] for item in bugs_with_rows]
         
         # Validate model parameter
         if model not in ["GPT-5", "Llama"]:
@@ -252,9 +246,13 @@ async def upload_file(file: UploadFile = File(...), session_id: Optional[str] = 
         # Classify using batch with selected model
         classified = await batch_classify(bug_texts, model=model)
         
-        # Build results with No column
+        # Build results
         results = []
-        for i, (bug_entry, classification) in enumerate(zip(bugs_with_no, classified)):
+        for i, (bug_entry, classification) in enumerate(zip(bugs_with_rows, classified)):
+            # Handle None classification
+            if classification is None:
+                classification = {"label": "", "reason": "classification_failed", "team": None, "severity": None}
+            
             if isinstance(classification, dict):
                 label = classification.get('label') or ''
                 reason = classification.get('reason') or ''
@@ -267,22 +265,20 @@ async def upload_file(file: UploadFile = File(...), session_id: Optional[str] = 
                 severity = None
             
             results.append({
-                "text": f"{bug_entry['no']} | {bug_entry['bug']}",
+                "text": bug_entry['combined_text'],
                 "label": label,
                 "raw": reason,
                 "team": team,
                 "severity": severity
             })
         
-        # Store results for download
         latest_results = {
             "filename": file.filename,
             "results": results,
-            "bugs_with_no": bugs_with_no,
+            "bugs_with_no": [item['original_row'] for item in bugs_with_rows],
             "classifications": classified
         }
-        
-        # Save to database if enabled
+        # Save to database if enabled (optional)
         upload_id = None
         if DATABASE_ENABLED and file_path:
             try:
@@ -291,22 +287,21 @@ async def upload_file(file: UploadFile = File(...), session_id: Optional[str] = 
                     filename=file.filename,
                     file_path=file_path,
                     file_size=file_size,
-                    total_rows=len(bugs_with_no),
+                    total_rows=len(bugs_with_rows),
                     classified_rows=len(results)
                 )
-                # Save classification results
-                save_classification_results(upload_id, results)
+                # Truyền original_rows để lưu toàn bộ dữ liệu gốc
+                original_rows = [item['original_row'] for item in bugs_with_rows]
+                save_classification_results(upload_id, results, original_rows)
             except Exception as e:
                 print(f"Warning: Failed to save to database: {e}")
-        
         return {
             "filename": file.filename,
-            "total_rows": len(bugs_with_no),
+            "total_rows": len(bugs_with_rows),
             "classified_rows": len(results),
             "results": results,
             "file_upload_id": upload_id
         }
-    
     except HTTPException:
         raise
     except Exception as e:
@@ -328,11 +323,20 @@ async def download_result():
     output = io.StringIO()
     writer = csv.writer(output)
     
-    # Write header
-    writer.writerow(['No', 'Nội dung bug', 'Label', 'Giải thích', 'Team', 'Severity'])
+    # Lấy các cột gốc từ row đầu tiên
+    original_rows = latest_results['bugs_with_no']
+    if not original_rows:
+        raise HTTPException(status_code=400, detail="no data available")
+    
+    # Lấy tên các cột gốc
+    original_columns = list(original_rows[0].keys()) if isinstance(original_rows[0], dict) else []
+    
+    # Write header: các cột gốc + các cột bổ sung
+    header = original_columns + ['Label', 'Giải thích', 'Team', 'Severity']
+    writer.writerow(header)
     
     # Write data rows
-    for i, (bug_entry, classification) in enumerate(zip(latest_results['bugs_with_no'], latest_results['classifications'])):
+    for i, (bug_entry, classification) in enumerate(zip(original_rows, latest_results['classifications'])):
         if isinstance(classification, dict):
             label = classification.get('label') or ''
             reason = classification.get('reason') or ''
@@ -344,14 +348,17 @@ async def download_result():
             team = ''
             severity = ''
         
-        writer.writerow([
-            bug_entry['no'],
-            bug_entry['bug'],
-            label,
-            reason,
-            team,
-            severity
-        ])
+        # Kết hợp dữ liệu gốc và kết quả phân loại
+        row_data = []
+        if isinstance(bug_entry, dict):
+            for col in original_columns:
+                val = bug_entry.get(col, '')
+                # Thay thế nan bằng empty string
+                val_str = str(val) if val is not None else ''
+                row_data.append('' if val_str.lower() == 'nan' else val_str)
+        row_data.extend([label, reason, team, severity])
+        
+        writer.writerow(row_data)
     
     # Return as file download
     output.seek(0)
@@ -367,11 +374,21 @@ async def download_excel(req: DownloadExcelRequest):
     """
     Generate Excel file từ classification results
     """
+    global latest_results
+    
     if not Workbook:
         raise HTTPException(status_code=400, detail="openpyxl not installed")
     
-    if not req.results:
+    if not req.results or not latest_results:
         raise HTTPException(status_code=400, detail="no results to download")
+    
+    # Lấy các cột gốc từ file upload
+    original_rows = latest_results['bugs_with_no']
+    if not original_rows:
+        raise HTTPException(status_code=400, detail="no data available")
+    
+    # Lấy tên các cột gốc
+    original_columns = list(original_rows[0].keys()) if isinstance(original_rows[0], dict) else []
     
     # Create Excel workbook
     wb = Workbook()
@@ -381,43 +398,71 @@ async def download_excel(req: DownloadExcelRequest):
     # Define styles
     header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
     header_font = Font(bold=True, color="FFFFFF")
+    # Màu cam cho các cột bổ sung
+    orange_fill = PatternFill(start_color="FFA500", end_color="FFA500", fill_type="solid")
+    orange_header_fill = PatternFill(start_color="FF8C00", end_color="FF8C00", fill_type="solid")
     
-    # Write headers
-    headers = ['No', 'Nội dung bug', 'Label', 'Giải thích', 'Team', 'Severity']
-    for col, header in enumerate(headers, 1):
-        cell = ws.cell(row=1, column=col)
+    # Write headers: các cột gốc + các cột bổ sung
+    all_headers = original_columns + ['Label', 'Giải thích', 'Team', 'Severity']
+    num_original_cols = len(original_columns)
+    
+    for col_idx, header in enumerate(all_headers, 1):
+        cell = ws.cell(row=1, column=col_idx)
         cell.value = header
-        cell.fill = header_fill
+        # Nếu là cột bổ sung thì tô màu cam
+        if col_idx > num_original_cols:
+            cell.fill = orange_header_fill
+        else:
+            cell.fill = header_fill
         cell.font = header_font
         cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
     
     # Sắp xếp kết quả theo label
     sorted_results = sorted(req.results, key=lambda r: (r.label or '').lower())
-    for row_idx, result in enumerate(sorted_results, 2):
-        # Parse text to extract No and Bug
-        parts = result.text.split(' | ')
-        no = parts[0] if parts else str(row_idx - 1)
-        bug = ' | '.join(parts[1:]) if len(parts) > 1 else result.text
-        row_data = [
-            no,
-            bug,
+    
+    # Write data rows
+    for row_idx, (result, original_row) in enumerate(zip(sorted_results, original_rows), 2):
+        col_idx = 1
+        
+        # Ghi các cột gốc
+        if isinstance(original_row, dict):
+            for col_name in original_columns:
+                cell = ws.cell(row=row_idx, column=col_idx)
+                val = original_row.get(col_name, '')
+                # Thay thế nan bằng empty string
+                val_str = str(val) if val is not None else ''
+                cell.value = '' if val_str.lower() == 'nan' else val_str
+                cell.alignment = Alignment(horizontal='left', vertical='top', wrap_text=True)
+                col_idx += 1
+        
+        # Ghi các cột bổ sung (không tô màu cam cho data)
+        added_data = [
             result.label,
             result.raw,
             result.team or '',
             result.severity or ''
         ]
-        for col, value in enumerate(row_data, 1):
-            cell = ws.cell(row=row_idx, column=col)
+        for value in added_data:
+            cell = ws.cell(row=row_idx, column=col_idx)
             cell.value = value
             cell.alignment = Alignment(horizontal='left', vertical='top', wrap_text=True)
+            col_idx += 1
     
     # Auto-adjust column widths
-    ws.column_dimensions['A'].width = 8
-    ws.column_dimensions['B'].width = 40
-    ws.column_dimensions['C'].width = 15
-    ws.column_dimensions['D'].width = 35
-    ws.column_dimensions['E'].width = 20
-    ws.column_dimensions['F'].width = 12
+    for col_idx in range(1, len(all_headers) + 1):
+        col_letter = ws.cell(row=1, column=col_idx).column_letter
+        if col_idx <= num_original_cols:
+            ws.column_dimensions[col_letter].width = 15
+        else:
+            # Các cột bổ sung rộng hơn
+            if col_idx == num_original_cols + 1:  # Label
+                ws.column_dimensions[col_letter].width = 15
+            elif col_idx == num_original_cols + 2:  # Giải thích
+                ws.column_dimensions[col_letter].width = 35
+            elif col_idx == num_original_cols + 3:  # Team
+                ws.column_dimensions[col_letter].width = 20
+            else:  # Severity
+                ws.column_dimensions[col_letter].width = 12
     
     # Save to bytes
     excel_buffer = io.BytesIO()

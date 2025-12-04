@@ -53,12 +53,13 @@ def init_db():
         )
     """)
     
-    # Classification results table
+    # Classification results table (flexible schema for any template)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS classification_results (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             file_upload_id INTEGER NOT NULL,
-            bug_text TEXT NOT NULL,
+            original_data TEXT NOT NULL,
+            combined_text TEXT NOT NULL,
             label TEXT NOT NULL,
             reason TEXT,
             team TEXT,
@@ -201,19 +202,23 @@ def save_file_upload(
     return upload_id
 
 
-def save_classification_results(file_upload_id: int, results: List[Dict[str, Any]]) -> bool:
+def save_classification_results(file_upload_id: int, results: List[Dict[str, Any]], original_rows: List[Dict[str, Any]]) -> bool:
     """Save classification results for a file upload"""
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         
-        for result in results:
+        for i, result in enumerate(results):
+            # Lấy original_data từ original_rows
+            original_data = json.dumps(original_rows[i], ensure_ascii=False) if i < len(original_rows) else '{}'
+            
             cursor.execute(
                 """INSERT INTO classification_results 
-                   (file_upload_id, bug_text, label, reason, team, severity)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                   (file_upload_id, original_data, combined_text, label, reason, team, severity)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (
                     file_upload_id,
+                    original_data,
                     result.get('text', ''),
                     result.get('label', ''),
                     result.get('raw', ''),
@@ -263,7 +268,19 @@ def get_classification_results(file_upload_id: int) -> List[Dict[str, Any]]:
     )
     rows = cursor.fetchall()
     conn.close()
-    return [dict(row) for row in rows]
+    
+    results = []
+    for row in rows:
+        result = dict(row)
+        # Parse original_data từ JSON
+        if result.get('original_data'):
+            try:
+                result['original_data'] = json.loads(result['original_data'])
+            except:
+                result['original_data'] = {}
+        results.append(result)
+    
+    return results
 
 
 def get_statistics() -> Dict[str, Any]:

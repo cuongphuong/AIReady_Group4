@@ -136,13 +136,30 @@ class LlamaService:
         # Use proper chat template format for better instruction following
         prompt = f"""<|start_header_id|>system<|end_header_id|>
 
-You are an expert QA bug classifier. Analyze bug reports and classify them into the correct category. Always respond with valid JSON only.<|eot_id|><|start_header_id|>user<|end_header_id|>
+You are an expert QA bug classifier with 10+ years of experience. Analyze bug reports and classify them into the correct category. Always respond with valid JSON only.<|eot_id|><|start_header_id|>user<|end_header_id|>
 
-Classify the following bug report into ONE category.
+=== TASK ===
+Classify the following bug report into ONE category from the available list.
+
+=== ANALYSIS STEPS ===
+1. Read all information in the bug report (may contain multiple fields: No, Summary, Description, Priority, Status, etc.).
+2. AUTOMATICALLY IDENTIFY which field contains the main bug description (usually Summary, Description, or similar fields).
+3. IGNORE irrelevant information (such as ID, Create date, Reporter, etc.).
+4. Focus on the error description to identify main keywords.
+5. Match with available labels and choose the most appropriate one semantically.
+6. Assess severity based on actual impact: Critical (system crash/security) > High (main function broken) > Medium (poor experience) > Low (minor display issues).
+
+=== RULES ===
+- DO NOT make up new labels outside the list.
+- Reason must be concise (< 30 words) and in Vietnamese.
+- AUTOMATICALLY filter important information from input data.
 
 Available categories: {labels_text}
 
-Bug report: "{description}"
+Bug report (may contain multiple fields, automatically filter important information):
+<<<
+{description}
+>>>
 
 Respond with ONLY a JSON object (no additional text):
 {{
@@ -291,13 +308,32 @@ Respond with ONLY a JSON object (no additional text):
         
         prompt = f"""<|start_header_id|>system<|end_header_id|>
 
-You are an expert QA bug classifier. Analyze multiple bug reports and classify each into the correct category. Always respond with valid JSON array only.<|eot_id|><|start_header_id|>user<|end_header_id|>
+You are an expert QA bug classifier with 10+ years of experience. Analyze multiple bug reports and classify each into the correct category. Always respond with valid JSON array only.<|eot_id|><|start_header_id|>user<|end_header_id|>
 
-Classify the following {len(descriptions)} bug reports into categories.
+=== TASK ===
+Classify ALL {len(descriptions)} bug reports below into categories.
+Each bug must be assigned EXACTLY ONE label, with reason, team, and severity.
+
+=== ANALYSIS STEPS ===
+For each bug:
+1. Read all information (may contain multiple fields like No, Summary, Description, Priority, etc.).
+2. AUTOMATICALLY IDENTIFY which field contains the main bug description.
+3. IGNORE irrelevant information (ID, create date, reporter, etc.).
+4. Identify main keywords from the error description.
+5. Match with available labels and choose the most appropriate one.
+6. Prioritize specific labels (e.g., "Database" > "Backend" if related to queries).
+7. Assess severity based on actual impact.
+
+=== RULES ===
+- MUST classify ALL bugs (include all indexes in the list).
+- DO NOT skip any bug.
+- DO NOT make up new labels outside the list.
+- Reason must be concise (< 30 words) and in Vietnamese.
+- AUTOMATICALLY filter important information from input data.
 
 Available categories: {labels_text}
 
-Bug reports:
+Bug reports to classify (each bug may contain multiple fields, automatically filter important information):
 {bugs_list}
 
 Respond with ONLY a JSON array containing {len(descriptions)} objects (no additional text). Each object must have:

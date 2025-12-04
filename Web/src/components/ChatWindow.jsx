@@ -396,14 +396,19 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
       let labelSummary = Object.entries(labelCounts)
         .map(([label, count]) => `- ${label}: ${count} bug`)
         .join('\n');
+      // Check if this is from Jira import
+      const isJiraImport = bulkFile && bulkFile.name.startsWith('jira-import');
+      
       const bot = {
         id: Date.now() + 1,
         role: 'assistant',
         text: `✅ Đã phân loại ${data.classified_rows}/${data.total_rows} bugs.\n${labelSummary}`,
         time,
         animate: true,
-        hasDownloadButton: true, // Flag for download button
-        model: selectedModel
+        hasDownloadButton: true,
+        hasAssignButton: isJiraImport, // Show Assign button for Jira imports
+        model: selectedModel,
+        file_upload_id: fileUploadId
       }
       
       // Lưu classification result vào database với file_upload_id
@@ -624,6 +629,9 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
     setJiraClassifying(true);
     setShowJiraImport(false);
 
+    // Store Jira issues for later assignment
+    window.lastJiraIssues = issuesToClassify;
+
     // Create a CSV string in memory
     const csvHeader = "No,Nội dung bug\n";
     const csvBody = issuesToClassify.map(issue => `"${issue.key}","${issue.summary.replace(/"/g, '""')}"`).join('\n');
@@ -641,6 +649,41 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
       uploadBulkFile();
       setJiraClassifying(false);
     }, 100);
+  }
+
+  async function handleAssignToJira(messageWithUpload) {
+    // Load results if needed
+    if (messageWithUpload?.file_upload_id && (!window.lastUploadResults || window.lastUploadResults.file_upload_id !== messageWithUpload.file_upload_id)) {
+      try {
+        const resultsResponse = await fetch(
+          `http://localhost:8000/classification-results/${messageWithUpload.file_upload_id}`
+        )
+        if (resultsResponse.ok) {
+          const resultsData = await resultsResponse.json()
+          window.lastUploadResults = {
+            results: resultsData.results,
+            file_upload_id: messageWithUpload.file_upload_id
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load classification results:', err)
+      }
+    }
+
+    if (!window.lastUploadResults || !window.lastJiraIssues) {
+      setNotice('❌ Không có dữ liệu để assign')
+      setTimeout(() => setNotice(''), 3000)
+      return
+    }
+
+    // Map results back to Jira issues and assign labels
+    const results = window.lastUploadResults.results
+    const jiraIssues = window.lastJiraIssues
+
+    console.log('Assigning labels to Jira issues:', { results, jiraIssues })
+    
+    setNotice('✅ Chức năng Assign đang được phát triển...')
+    setTimeout(() => setNotice(''), 3000)
   }
 
   return (
@@ -673,6 +716,8 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
             typing={m.typing}
             hasDownloadButton={m.hasDownloadButton}
             onDownload={m.hasDownloadButton ? () => downloadExcel(m) : null}
+            hasAssignButton={m.hasAssignButton}
+            onAssign={m.hasAssignButton ? () => handleAssignToJira(m) : null}
             model={m.model}
           />
         ))}
@@ -689,13 +734,76 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
         />
 
         <div className="composer-pill" aria-hidden={!chat}>
+          {/* File Status - Integrated at top of composer */}
+          {bulkFile && (
+            <div style={{
+              display: 'flex',
+              gap: '8px',
+              alignItems: 'center',
+              padding: '8px 12px',
+              backgroundColor: 'rgba(100, 200, 255, 0.08)',
+              borderBottom: '1px solid rgba(100, 200, 255, 0.2)',
+              fontSize: '12px',
+              borderRadius: '20px 20px 20px 20px'
+            }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0, color: 'rgba(100, 200, 255, 0.9)' }}>
+                <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                <polyline points="13 2 13 9 20 9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              <span style={{ 
+                flex: 1, 
+                overflow: 'hidden', 
+                textOverflow: 'ellipsis', 
+                whiteSpace: 'nowrap',
+                color: 'var(--text)',
+                fontWeight: '500'
+              }}>
+                {bulkFile.name}
+              </span>
+              <button
+                onClick={() => setBulkFile(null)}
+                disabled={bulkLoading}
+                style={{
+                  padding: '0',
+                  width: '20px',
+                  height: '20px',
+                  backgroundColor: 'transparent',
+                  color: 'var(--text-secondary)',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: bulkLoading ? 'not-allowed' : 'pointer',
+                  fontSize: '14px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  opacity: bulkLoading ? 0.3 : 0.6,
+                  transition: 'all 0.2s ease'
+                }}
+                onMouseEnter={(e) => {
+                  if (!bulkLoading) {
+                    e.currentTarget.style.opacity = '1'
+                    e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.08)'
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!bulkLoading) {
+                    e.currentTarget.style.opacity = '0.6'
+                    e.currentTarget.style.backgroundColor = 'transparent'
+                  }
+                }}
+              >
+                ✕
+              </button>
+            </div>
+          )}
+          
           <textarea
             ref={composeRef}
             className="composer-input"
             value={value}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={handleKey}
-            placeholder={chat ? 'Mô tả lỗi hoặc dán danh sách bug; hoặc đính kèm file (.csv, .xlsx)' : 'Select or create a chat to start'}
+            placeholder={chat ? (bulkFile ? 'Click send button to upload file...' : 'Mô tả lỗi hoặc dán danh sách bug; hoặc đính kèm file (.csv, .xlsx)') : 'Select or create a chat to start'}
             disabled={!chat}
             rows={1}
           />
@@ -711,18 +819,34 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
               className="icon-btn send"
               onClick={bulkFile ? uploadBulkFile : sendMessage}
               disabled={!chat || sending || (bulkFile ? bulkLoading : !value.trim())}
-              title={bulkFile ? "📤 Upload & Gửi" : "Gửi"}
+              title={bulkFile ? (bulkLoading ? "Uploading..." : "Upload file") : "Send message"}
+              style={{
+                backgroundColor: bulkFile ? 'rgba(40, 167, 69, 0.15)' : 'transparent',
+                transition: 'all 0.2s ease'
+              }}
             >
-              {bulkFile ? "📤" : (
+              {bulkFile ? (
+                bulkLoading ? (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ animation: 'spin 1s linear infinite' }}>
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeDasharray="60" strokeDashoffset="15" strokeLinecap="round"/>
+                  </svg>
+                ) : (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    <polyline points="17 8 12 3 7 8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    <line x1="12" y1="3" x2="12" y2="15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                )
+              ) : (
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M22 2L11 13" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/><path d="M22 2L15 22l-4-9-9-4 20-7z" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/></svg>
               )}
             </button>
 
-            {/* Button + */}
+            {/* Upload Button - Paperclip Icon */}
             <button 
               onClick={triggerUpload} 
               disabled={!chat}
-              title="Upload file"
+              title="Attach CSV/Excel file"
               className="icon-btn"
               style={{
                 width: '32px',
@@ -732,10 +856,13 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
                 alignItems: 'center',
                 justifyContent: 'center',
                 padding: 0,
-                marginLeft: '4px'
+                marginLeft: '4px',
+                transition: 'all 0.2s ease'
               }}
             >
-              <span style={{ fontSize: '18px', lineHeight: 1 }}>＋</span>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
             </button>
 
             {/* Model Selector */}
@@ -916,53 +1043,6 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
             </div>
           </div>
         </div>
-
-        {/* Bulk File Status */}
-        {bulkFile && (
-          <div style={{
-            padding: '8px 12px',
-            backgroundColor: 'var(--surface)',
-            borderTop: '1px solid var(--border)',
-            display: 'flex',
-            gap: '8px',
-            alignItems: 'center',
-            fontSize: '13px'
-          }}>
-            <span style={{ flex: 1 }}>📄 {bulkFile.name}</span>
-            <button
-              onClick={uploadBulkFile}
-              disabled={bulkLoading}
-              style={{
-                padding: '4px 10px',
-                backgroundColor: '#28a745',
-                color: 'white',
-                border: 'none',
-                borderRadius: '3px',
-                cursor: bulkLoading ? 'not-allowed' : 'pointer',
-                fontSize: '12px',
-                fontWeight: 'bold',
-                opacity: bulkLoading ? 0.6 : 1
-              }}
-            >
-              {bulkLoading ? '⏳' : '📤'}
-            </button>
-            <button
-              onClick={() => setBulkFile(null)}
-              disabled={bulkLoading}
-              style={{
-                padding: '4px 8px',
-                backgroundColor: '#6c757d',
-                color: 'white',
-                border: 'none',
-                borderRadius: '3px',
-                cursor: 'pointer',
-                fontSize: '12px'
-              }}
-            >
-              ✕
-            </button>
-          </div>
-        )}
       </div>
     </div>
   )

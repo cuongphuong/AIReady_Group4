@@ -80,17 +80,21 @@ Các ví dụ minh họa:
 {example_text}
 
 === LẬP LUẬN ===
-1. Đọc kỹ mô tả bug, xác định từ khóa chính (keywords).
-2. So sánh với các nhãn có sẵn, tìm nhãn khớp nhất về mặt ngữ nghĩa.
-3. Nếu có nhiều nhãn phù hợp, ưu tiên nhãn cụ thể hơn (VD: "Backend" > "Functional").
-4. Đánh giá tác động: Critical (hệ thống sập/bảo mật) > High (chức năng chính lỗi) > Medium (trải nghiệm kém) > Low (hiển thị sai nhỏ).
+1. Đọc toàn bộ thông tin bug (có thể chứa nhiều trường: No, Summary, Description, Priority, Status, v.v.).
+2. TỰ ĐỘNG XÁC ĐỊNH trường nào chứa nội dung mô tả bug chính (thường là Summary, Description, hoặc các trường tương tự).
+3. BỎ QUA các thông tin không liên quan (như ID, Create date, Reporter, v.v.).
+4. Tập trung vào nội dung mô tả lỗi để xác định từ khóa chính (keywords).
+5. So sánh với các nhãn có sẵn, tìm nhãn khớp nhất về mặt ngữ nghĩa.
+6. Nếu có nhiều nhãn phù hợp, ưu tiên nhãn cụ thể hơn (VD: "Backend" > "Functional").
+7. Đánh giá tác động: Critical (hệ thống sập/bảo mật) > High (chức năng chính lỗi) > Medium (trải nghiệm kém) > Low (hiển thị sai nhỏ).
 
 === QUY TẮC ===
 - KHÔNG bịa ra nhãn mới ngoài danh sách.
 - Lý do phải ngắn gọn (< 30 từ) và bằng tiếng Việt.
 - Phải chọn đúng team dựa trên nhãn phân loại.
+- TỰ ĐỘNG lọc thông tin quan trọng từ dữ liệu đầu vào.
 
-Báo cáo bug cần phân loại:
+Thông tin bug cần phân loại (có thể chứa nhiều trường, hãy tự động lọc thông tin quan trọng):
 <<<
 {description}
 >>>
@@ -253,16 +257,20 @@ Các ví dụ minh họa:
 
 === LẬP LUẬN ===
 Với mỗi bug:
-1. Xác định từ khóa chính (keywords) trong mô tả.
-2. So khớp với danh sách nhãn, chọn nhãn phù hợp nhất.
-3. Ưu tiên nhãn cụ thể (VD: "Database" > "Backend" nếu liên quan query).
-4. Đánh giá severity dựa trên tác động thực tế.
+1. Đọc toàn bộ thông tin (có thể chứa nhiều trường như No, Summary, Description, Priority, v.v.).
+2. TỰ ĐỘNG XÁC ĐỊNH trường nào chứa nội dung mô tả bug chính.
+3. BỎ QUA các thông tin không liên quan (ID, ngày tạo, người báo cáo, v.v.).
+4. Xác định từ khóa chính (keywords) từ nội dung mô tả lỗi.
+5. So khớp với danh sách nhãn, chọn nhãn phù hợp nhất.
+6. Ưu tiên nhãn cụ thể (VD: "Database" > "Backend" nếu liên quan query).
+7. Đánh giá severity dựa trên tác động thực tế.
 
 === QUY TẮC ===
 - PHẢI phân loại hết tất cả các bug (bao gồm cả index trong danh sách).
 - KHÔNG bỏ sót bug nào.
 - KHÔNG bịa ra nhãn mới ngoài danh sách.
 - Lý do phải ngắn gọn (< 30 từ) và bằng tiếng Việt.
+- TỰ ĐỘNG lọc thông tin quan trọng từ dữ liệu đầu vào.
 
 Danh sách báo cáo cần phân loại (format [index]: text):
 {input_list_text}
