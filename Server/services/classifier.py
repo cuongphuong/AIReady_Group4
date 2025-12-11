@@ -51,7 +51,7 @@ except Exception as e:
     LLAMA_AVAILABLE = False
     logger.error(f"❌ Error importing Llama service: {e}")
 
-# Import ChromaDB vector store
+# Vector store (previously ChromaDB) - now backed by Pinecone via models/vector_store
 try:
     from models.vector_store import (
         search_similar_classified_bugs,
@@ -59,11 +59,11 @@ try:
         add_classified_bug_to_vector_store,
         get_vector_store_stats
     )
-    CHROMA_AVAILABLE = True
-    logger.info("✅ ChromaDB vector store available")
+    VECTOR_STORE_AVAILABLE = True
+    logger.info("✅ Vector store available (Pinecone-backed)")
 except ImportError as e:
-    CHROMA_AVAILABLE = False
-    logger.warning(f"⚠️ ChromaDB not available: {e}")
+    VECTOR_STORE_AVAILABLE = False
+    logger.warning(f"⚠️ Vector store not available: {e}")
 
 
 # Helper functions
@@ -146,7 +146,7 @@ async def classify_bug(description: str, model: str = "GPT-5"):
     """
     Phân loại bug report với multi-layer approach:
     1. Keyword heuristic (nhanh nhất)
-    2. Semantic search từ ChromaDB (cached bugs)
+    2. Semantic search từ vector store (cached bugs)
     3. LLM classification với dynamic few-shot examples
     
     Args:
@@ -161,14 +161,17 @@ async def classify_bug(description: str, model: str = "GPT-5"):
     heuristic_result = _quick_heuristic_for_text(description)
     if heuristic_result:
         logger.info(f"⚡ Heuristic match: {heuristic_result}")
-        # Không lưu vào ChromaDB - quá rõ ràng, chỉ dựa vào keywords
+        # Không lưu vào vector store - quá rõ ràng, chỉ dựa vào keywords
         return heuristic_result
     
     # Xác định embedding type dựa trên model
     use_local = (model == "Llama")
     
-    # Bước 2: Semantic search trong ChromaDB (bugs đã classify)
-    if CHROMA_AVAILABLE:
+    # Track if high similarity match exists (>= 85%)
+    has_high_similarity_match = False
+    
+    # Bước 2: Semantic search trong vector store (bugs đã classify)
+    if VECTOR_STORE_AVAILABLE:
         try:
             similar_bugs = search_similar_classified_bugs(
                 query=description,
@@ -180,23 +183,27 @@ async def classify_bug(description: str, model: str = "GPT-5"):
             if similar_bugs and len(similar_bugs) > 0:
                 best_match = similar_bugs[0]
                 similarity = best_match.get('similarity', 0)
+                metadata = best_match.get('metadata', {})
                 
-                if similarity >= 0.85:  # Very similar bug found
-                    result = {
-                        'label': best_match['metadata']['label'],
-                        'reason': f"Similar to: '{best_match['text'][:60]}...' (semantic: {similarity:.0%})",
-                        'team': best_match['metadata'].get('team'),
-                        'severity': best_match['metadata'].get('severity')
-                    }
-                    logger.info(f"🎯 Semantic match: {result}")
-                    # Không lưu vào ChromaDB - đã có bug tương tự trong DB
-                    return result
+                if similarity >= 0.85:
+                    has_high_similarity_match = True  # Mark that we found high similarity
+                    
+                    if metadata.get('label'):  # Very similar bug found with label
+                        result = {
+                            'label': metadata.get('label'),
+                            'reason': f"Similar to: '{best_match.get('text', '')[:60]}...' (semantic: {similarity:.0%})",
+                            'team': metadata.get('team'),
+                            'severity': metadata.get('severity')
+                        }
+                        logger.info(f"🎯 Semantic match: {result}")
+                        # Không lưu vào vector store - đã có bug tương tự trong DB
+                        return result
         except Exception as e:
-            logger.warning(f"⚠️ ChromaDB search failed: {e}")
+            logger.warning(f"⚠️ Vector store search failed: {e}")
     
-    # Bước 3: Get dynamic few-shot examples từ ChromaDB
+    # Bước 3: Get dynamic few-shot examples từ vector store
     dynamic_examples = FEW_SHOT_EXAMPLES  # Default
-    if CHROMA_AVAILABLE:
+    if VECTOR_STORE_AVAILABLE:
         try:
             retrieved_examples = get_dynamic_few_shot_examples(
                 description,
@@ -234,8 +241,8 @@ async def classify_bug(description: str, model: str = "GPT-5"):
                 result['team'] = LABEL_TO_TEAM.get(result['label'])
             logger.info(f"✅ Llama result: {result}")
             
-            # Lưu vào ChromaDB để học từ classification này (dùng local embeddings cho Llama)
-            if CHROMA_AVAILABLE and result.get('label'):
+            # Lưu vào vector store nếu không có match >= 85%
+            if VECTOR_STORE_AVAILABLE and result.get('label') and not has_high_similarity_match:
                 try:
                     add_classified_bug_to_vector_store(
                         bug_text=description,
@@ -248,6 +255,8 @@ async def classify_bug(description: str, model: str = "GPT-5"):
                     logger.info("💾 Saved to vector store (LOCAL embeddings)")
                 except Exception as e:
                     logger.warning(f"⚠️ Failed to save to vector store: {e}")
+            elif has_high_similarity_match:
+                logger.info("⏭️  Skipped saving - high similarity match exists (>= 85%)")
             
             return result
         except Exception as e:
@@ -277,8 +286,8 @@ async def classify_bug(description: str, model: str = "GPT-5"):
                 result['team'] = LABEL_TO_TEAM.get(result['label'])
             logger.info(f"✅ GPT result: {result}")
             
-            # Lưu vào ChromaDB để học từ classification này (dùng OpenAI embeddings cho GPT)
-            if CHROMA_AVAILABLE and result.get('label'):
+            # Lưu vào vector store nếu không có match >= 85%
+            if VECTOR_STORE_AVAILABLE and result.get('label') and not has_high_similarity_match:
                 try:
                     add_classified_bug_to_vector_store(
                         bug_text=description,
@@ -291,6 +300,8 @@ async def classify_bug(description: str, model: str = "GPT-5"):
                     logger.info("💾 Saved to vector store (OPENAI embeddings)")
                 except Exception as e:
                     logger.warning(f"⚠️ Failed to save to vector store: {e}")
+            elif has_high_similarity_match:
+                logger.info("⏭️  Skipped saving - high similarity match exists (>= 85%)")
             
             return result
         except Exception as e:
@@ -323,12 +334,14 @@ async def batch_classify(descriptions: List[str], model: str = "GPT-5"):
     logger.info(f"⚡ Tier 1 Heuristic: {len(descriptions) - len(remaining_indexes)}/{len(descriptions)} matched")
 
     if not remaining_indexes:
-        # Heuristic match 100% → Không cần lưu vào ChromaDB (quá rõ ràng)
+        # Heuristic match 100% → Không cần lưu vào vector store (quá rõ ràng)
         return results
     
-    # TIER 2: ChromaDB Semantic Search (>85% similarity)
+    # TIER 2: Vector store Semantic Search (>85% similarity)
+    # Track which bugs have high similarity matches (>= 85%)
+    high_similarity_bugs = set()  # Set of bug indexes with >= 85% similarity
     semantic_remaining = []
-    if CHROMA_AVAILABLE:
+    if VECTOR_STORE_AVAILABLE:
         logger.info(f"🔍 Tier 2 Semantic Search: Checking {len(remaining_indexes)} bugs...")
         for idx in remaining_indexes:
             try:
@@ -346,20 +359,39 @@ async def batch_classify(descriptions: List[str], model: str = "GPT-5"):
                     best_match = similar_bugs[0]
                     similarity = best_match.get('similarity', 0)
                     
+                    # Ensure similarity is a number
+                    try:
+                        similarity = float(similarity) if similarity is not None else 0
+                    except (ValueError, TypeError):
+                        logger.warning(f"   Bug {idx}: Invalid similarity value: {similarity} (type: {type(similarity)})")
+                        similarity = 0
+                    
+                    metadata = best_match.get('metadata', {})
+                    
                     # Debug: In ra top 3 matches
                     if len(similar_bugs) > 1:
                         logger.info(f"   Bug {idx} top matches: " + ", ".join([f"{s.get('similarity', 0):.1%}" for s in similar_bugs[:3]]))
                     
+                    # Debug similarity value and type
+                    logger.debug(f"   Bug {idx}: similarity = {similarity}, type = {type(similarity)}, >= 0.85? {similarity >= 0.85 if similarity is not None else 'None'}")
+                    
                     if similarity >= 0.85:
-                        results[idx] = {
-                            'label': best_match['metadata']['label'],
-                            'reason': f"Similar: '{best_match['text'][:40]}...' ({similarity:.0%})",
-                            'team': best_match['metadata'].get('team'),
-                            'severity': best_match['metadata'].get('severity')
-                        }
-                        continue
+                        high_similarity_bugs.add(idx)  # Mark as high similarity
+                        
+                        if metadata.get('label'):
+                            results[idx] = {
+                                'label': metadata.get('label'),
+                                'reason': f"Similar: '{best_match.get('text', '')[:40]}...' ({similarity:.0%})",
+                                'team': metadata.get('team'),
+                                'severity': metadata.get('severity')
+                            }
+                            continue
+                        else:
+                            # Debug: why no label?
+                            logger.info(f"   Bug {idx}: High similarity ({similarity:.1%}) but metadata missing 'label' field")
+                            logger.debug(f"      metadata = {metadata}")
+                            logger.debug(f"      best_match = {best_match}")
                     else:
-                        # Similarity < 85% → Không đủ tin cậy, cần LLM
                         logger.info(f"   Bug {idx}: Found similar but only {similarity:.1%} < 85% threshold")
             except Exception as e:
                 logger.error(f"❌ Semantic search failed for bug {idx}: {e}", exc_info=True)
@@ -371,7 +403,7 @@ async def batch_classify(descriptions: List[str], model: str = "GPT-5"):
         remaining_indexes = semantic_remaining
     
     if not remaining_indexes:
-        # Semantic match từ ChromaDB → Không cần lưu lại (đã có trong DB)
+        # Semantic match từ vector store → Không cần lưu lại (đã có trong DB)
         return results
     
     # TIER 3 & 4: LLM Classification với dynamic few-shot examples
@@ -476,11 +508,18 @@ async def batch_classify(descriptions: List[str], model: str = "GPT-5"):
                     "team": None,
                 }
     
-    # TIER 5: Lưu tất cả kết quả vào ChromaDB để học và cải thiện
-    if CHROMA_AVAILABLE:
+    # TIER 5: Lưu kết quả vào vector store (bỏ qua những bug có high similarity >= 85%)
+    if VECTOR_STORE_AVAILABLE:
         saved_count = 0
+        skipped_count = 0
         for i, result in enumerate(results):
             if result and result.get('label'):
+                # Skip saving if bug has high similarity match (>= 85%)
+                if i in high_similarity_bugs:
+                    skipped_count += 1
+                    logger.debug(f"Skipped bug {i} - high similarity match exists")
+                    continue
+                    
                 try:
                     add_classified_bug_to_vector_store(
                         bug_text=descriptions[i],
@@ -494,7 +533,7 @@ async def batch_classify(descriptions: List[str], model: str = "GPT-5"):
                 except Exception as e:
                     logger.debug(f"Failed to save bug {i}: {e}")
         
-        logger.info(f"💾 Saved {saved_count}/{len(results)} results to ChromaDB")
+        logger.info(f"💾 Saved {saved_count}/{len(results)} results to vector store (skipped {skipped_count} with high similarity)")
     
     logger.info(f"✅ Batch classification complete: {len(results)} results")
     logger.info(f"{'='*80}\n")

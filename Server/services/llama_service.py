@@ -63,7 +63,6 @@ class LlamaService:
             logger.info("⚡ Using 4-bit quantization (optimized for CPU)")
             
             # Load model with llama-cpp-python
-            # Tối ưu cho CPU I5 4 core 8 threads
             self.model = Llama(
                 model_path=self.model_path,
                 n_ctx=2048,  # Context window

@@ -12,3 +12,4 @@ transformers
 sentence-transformers
 psutil
 chromadb==1.3.5
+pinecone
