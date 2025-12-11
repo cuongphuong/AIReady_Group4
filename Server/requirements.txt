@@ -13,3 +13,7 @@ sentence-transformers
 psutil
 chromadb==1.3.5
 pinecone
+langchain>=0.1.0
+langchain-openai
+langchain-pinecone
+langchain-community

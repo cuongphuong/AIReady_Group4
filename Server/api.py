@@ -570,7 +570,7 @@ async def get_stats():
     
     # Add vector store stats if available
     try:
-        from models.vector_store import get_vector_store_stats
+        from services.unified_llm_service import get_vector_store_stats
         vector_stats = get_vector_store_stats()
         stats['vector_store'] = vector_stats
     except:
@@ -631,9 +631,9 @@ async def fetch_jira(req: JiraRequest):
 
 @app.get("/vector/stats")
 async def vector_stats():
-    """Get ChromaDB vector store statistics"""
+    """Get Pinecone vector store statistics"""
     try:
-        from models.vector_store import get_vector_store_stats
+        from services.unified_llm_service import get_vector_store_stats
         stats = get_vector_store_stats()
         return stats
     except Exception as e:
