@@ -65,7 +65,7 @@ def fetch_jira_issues(jql: str):
     payload = json.dumps({
         'jql': jql,
         'fields': ['summary', 'description', 'status', 'priority', 'assignee', 'created'],
-        'maxResults': 50
+        'maxResults': 200
     })
 
     try:
@@ -122,7 +122,7 @@ def fetch_jira_issues(jql: str):
 
 if __name__ == "__main__":
     # Example JQL for testing
-    test_jql = 'project = "My Software Team" AND assignee = currentUser()'
+    test_jql = 'project = "My Software Team" AND status = "To Do"'
     issues_result = fetch_jira_issues(test_jql)
     if "error" in issues_result:
         print(f"Error fetching issues: {issues_result['error']}")

@@ -126,15 +126,24 @@ BUG_LABELS = {
     }
 }
 
-# Team groups mapping
+# Team groups mapping (3 team, mỗi team 2 label)
 TEAM_GROUPS = {
-    "Frontend Team": ["UI", "UX", "Accessibility", "Frontend", "Compatibility", "Localization"],
-    "Backend Team": ["Backend", "Database", "Integration", "Functional"],
-    "Data Team": ["Data", "Observability"],
-    "Security & Privacy Team": ["Security", "Privacy"],
-    "Platform/Performance Team": ["Performance", "Memory", "Crash"],
-    "Infrastructure/DevOps Team": ["Build", "Network", "Config"]
+    "Frontend": [
+        "UI", "UX", "Accessibility", "Frontend", "Compatibility", "Localization"
+    ],
+    "Backend": [
+        "Backend", "Database", "Integration", "Functional", "Data", "Security", "Privacy"
+    ],
+    "Infra": [
+        "Network", "Performance", "Memory", "Crash", "Observability", "Build", "Config"
+    ]
 }
+
+# Build inverse mapping: label -> team
+LABEL_TO_TEAM = {}
+for team, labels in TEAM_GROUPS.items():
+    for label in labels:
+        LABEL_TO_TEAM[label] = team
 
 # Build inverse mapping: label -> team
 LABEL_TO_TEAM = {}
