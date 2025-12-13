@@ -263,6 +263,7 @@ def _batch_semantic_pass(descriptions: List[str], results: List[Optional[dict]],
     semantic_remaining = []
 
     for idx in remaining_indexes:
+        logger.info(f"🔎 Semantic search for bug {idx}...")
         try:
             semantic_result, is_high_sim = _try_semantic_search(descriptions[idx], k=3)
             

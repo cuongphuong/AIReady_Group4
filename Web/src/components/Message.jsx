@@ -74,7 +74,7 @@ export default function Message({ role = 'assistant', text = '', time = '', anim
                   <circle cx="12" cy="8" r="3" stroke="var(--accent-2)" strokeWidth="2" fill="none"/>
                   <path d="M6 18c0-3 2.5-5 6-5s6 2 6 5" stroke="var(--accent-2)" strokeWidth="2" strokeLinecap="round"/>
                 </svg>
-                <span style={{fontWeight:600, fontSize:14, color:'var(--text)'}}>Assign</span>
+                <span style={{fontWeight:600, fontSize:14, color:'var(--text)'}}>Update</span>
               </button>
             )}
           </div>

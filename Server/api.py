@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 import json
 import io
 import csv
+import re
 from typing import Optional, List
 
 # Import database and file storage
@@ -52,7 +53,7 @@ except ImportError:
 
 # Import Jira fetcher
 try:
-    from fetch_jira import fetch_jira_issues
+    from fetch_jira import fetch_jira_issues, update_jira_issues
 except ImportError:
     try:
         from .fetch_jira import fetch_jira_issues
@@ -95,6 +96,10 @@ class ClassifyItem(BaseModel):
     team: str | None = None
     severity: str | None = None
 
+class JiraItem(BaseModel):
+    label: str
+    team: str | None = None
+    issue_key: str
 
 class ClassifyResponse(BaseModel):
     results: list[ClassifyItem]
@@ -110,6 +115,9 @@ class UploadResponse(BaseModel):
 
 class DownloadExcelRequest(BaseModel):
     results: list[ClassifyItem]
+    
+class JiraUpdateRequest(BaseModel):
+    results: list[JiraItem]
 
 class CreateSessionRequest(BaseModel):
     session_id: str
@@ -376,6 +384,8 @@ async def download_excel(req: DownloadExcelRequest):
     """
     global latest_results
     
+    print(req);
+    
     if not Workbook:
         raise HTTPException(status_code=400, detail="openpyxl not installed")
     
@@ -417,11 +427,13 @@ async def download_excel(req: DownloadExcelRequest):
         cell.font = header_font
         cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
     
-    # Sắp xếp kết quả theo label
-    sorted_results = sorted(req.results, key=lambda r: (r.label or '').lower())
-    
-    # Write data rows
-    for row_idx, (result, original_row) in enumerate(zip(sorted_results, original_rows), 2):
+    # Write data rows in the original order to keep mapping between original rows and classifications
+    # Do not sort results here because that would break alignment with the uploaded rows
+    for row_idx in range(2, 2 + len(original_rows)):
+        i = row_idx - 2
+        # Safely get result and original_row by index
+        result = req.results[i] if i < len(req.results) else None
+        original_row = original_rows[i] if i < len(original_rows) else {}
         col_idx = 1
         
         # Ghi các cột gốc
@@ -436,12 +448,22 @@ async def download_excel(req: DownloadExcelRequest):
                 col_idx += 1
         
         # Ghi các cột bổ sung (không tô màu cam cho data)
-        added_data = [
-            result.label,
-            result.raw,
-            result.team or '',
-            result.severity or ''
-        ]
+        if result is None:
+            added_data = ['', '', '', '']
+        else:
+            # result may be a pydantic model or dict
+            if isinstance(result, dict):
+                label_val = result.get('label', '')
+                raw_val = result.get('raw', '')
+                team_val = result.get('team') or ''
+                sev_val = result.get('severity') or ''
+            else:
+                label_val = getattr(result, 'label', '')
+                raw_val = getattr(result, 'raw', '')
+                team_val = getattr(result, 'team', '') or ''
+                sev_val = getattr(result, 'severity', '') or ''
+
+            added_data = [label_val, raw_val, team_val, sev_val]
         for value in added_data:
             cell = ws.cell(row=row_idx, column=col_idx)
             cell.value = value
@@ -624,6 +646,24 @@ async def fetch_jira(req: JiraRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
+@app.post("/jira/update")
+async def update_jira(req: JiraUpdateRequest):
+    """
+    Update issues in Jira based on a JQL query.
+    """
+    if not update_jira_issues:
+        raise HTTPException(status_code=501, detail="Jira integration is not configured on the server.")
+
+
+    print(req.dict()["results"]);
+
+    try:
+        issues = update_jira_issues(req.dict()["results"])
+        if "error" in issues:
+            raise HTTPException(status_code=500, detail=issues.get("details", issues["error"]))
+        return {"issues": issues}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
 # ============================================================================
 # ChromaDB Vector Store Endpoints

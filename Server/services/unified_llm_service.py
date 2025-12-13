@@ -101,7 +101,7 @@ class LlamaProvider:
             self.model = Llama(
                 model_path=self.model_path,
                 n_ctx=2048,
-                n_threads=8,
+                n_threads=6,
                 n_batch=512,
                 n_gpu_layers=0,
                 use_mlock=True,

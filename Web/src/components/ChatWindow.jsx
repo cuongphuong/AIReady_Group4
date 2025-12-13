@@ -657,6 +657,7 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
   }
 
   async function handleAssignToJira(messageWithUpload) {
+    console.log('Handling assign to Jira for message:', messageWithUpload)
     // Load results if needed
     if (messageWithUpload?.file_upload_id && (!window.lastUploadResults || window.lastUploadResults.file_upload_id !== messageWithUpload.file_upload_id)) {
       try {
@@ -686,8 +687,29 @@ export default function ChatWindow({ chat = null, onUpdateChat = () => {} }) {
     const jiraIssues = window.lastJiraIssues
 
     console.log('Assigning labels to Jira issues:', { results, jiraIssues })
+
+    let resultList = [];
+    for (let i= 0; i < results.length; i++) {
+      resultList.push({
+        label: results[i].label,
+        team: results[i].team,
+        issue_key: jiraIssues[i] ? jiraIssues[i].key : null
+      });
+    }
+
+    console.log('Prepared result list for Jira assignment:', resultList);
+
+    try {
+      await fetch(`http://localhost:8000/jira/update`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ results: resultList })
+      })
+    } catch (err) {
+      console.warn('Failed to update session title:', err)
+    }
     
-    setNotice('✅ Chức năng Assign đang được phát triển...')
+    setNotice('✅ Update dữ liệu lên Jira thành công.')
     setTimeout(() => setNotice(''), 3000)
   }
 

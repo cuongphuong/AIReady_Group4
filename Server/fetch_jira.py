@@ -44,6 +44,71 @@ JIRA_BASE_URL = os.getenv("JIRA_BASE_URL")
 JIRA_EMAIL = os.getenv("JIRA_EMAIL")
 JIRA_TOKEN = os.getenv("JIRA_TOKEN")
 
+def update_jira_issue_fields(issue_key: str, label: str, team: str):
+    """
+    Update Jira issue fields: Labels and Team (custom field).
+    - issue_key: Jira issue key (e.g., "PROJ-123")
+    - label: value to add to Labels
+    - team: value to set for Team field (custom field)
+    """
+    if not JIRA_BASE_URL or not JIRA_EMAIL or not JIRA_TOKEN:
+        print("Error: Missing JIRA configuration in .env file.")
+        return {"error": "Missing JIRA configuration"}
+
+    url = f"{JIRA_BASE_URL}/rest/api/3/issue/{issue_key}"
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+    }
+    
+    teamId = "b9bdfa6a-bf22-47a1-b7c7-a866020c4e72"
+    if team == "Frontend":
+        teamId = "f26bbd8b-f931-4be1-b92d-55d4c89ffc14"
+    elif team == "Backend":
+        teamId = "b9bdfa6a-bf22-47a1-b7c7-a866020c4e72"
+    elif team == "Infra":
+        teamId = "612606f6-7633-4283-884c-2d2f4e5d22ca"
+
+    payload = {
+        "fields": {
+            "labels": [label],
+            "customfield_10001": teamId
+        }
+    }
+
+    try:
+        response = requests.put(
+            url,
+            headers=headers,
+            data=json.dumps(payload),
+            auth=HTTPBasicAuth(JIRA_EMAIL, JIRA_TOKEN)
+        )
+        response.raise_for_status()
+        print(f"Issue {issue_key} updated successfully with Label={label}, Team={team}")
+        return {"success": True}
+    except requests.exceptions.HTTPError as http_err:
+        print(f"HTTP error occurred: {http_err}")
+        return {"error": f"Failed to update issue {issue_key}", "details": http_err.response.text}
+    except Exception as e:
+        print(f"An error occurred: {str(e)}")
+        return {"error": str(e)}
+
+def update_jira_issues(issues: list):
+    """
+    Update nhiều Jira issues với Labels và Team.
+    Input: list các dict có dạng:
+      {"key": "PROJ-123", "label": "Functional", "team": "Backend"}
+    """
+    results = []
+    for item in issues:
+        issue_key = item.get("issue_key")
+        label = item.get("label")
+        team = item.get("team")
+
+        res = update_jira_issue_fields(issue_key, label, team)
+        results.append({"issue": issue_key, "result": res})
+    return results
+
 def fetch_jira_issues(jql: str):
     if not JIRA_BASE_URL or not JIRA_EMAIL or not JIRA_TOKEN:
         print("Error: Missing JIRA configuration in .env file.")
